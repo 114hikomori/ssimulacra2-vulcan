@@ -104,3 +104,23 @@ list owns the ids.
 - Next: Phase C — xyb_positive.comp: opsin premul (assert vs dumped rg/premul constants),
   CubeRootAndAdd op-for-op transcription (bit-trick seed, 3 NR, final iter, r²x+add),
   clamp order, X/Y/B mix, MakePositiveXYB order; parity ≤1e-6 vs dumps/photo r0 xyb planes.
+
+## 2026-09-08 — M2 ✅ + M3 ✅ (Phases C+D complete)
+
+- Done: M2: xyb_positive.comp (opsin fma chain, ZeroIfNegative clamps, CubeRootAndAdd
+  op-for-op, StoreXYB mix, MakePositiveXYB order) ≤4.8e-7 vs dumps on 4 fixtures × orig/dist ×
+  pre/positive (bar 1e-6). M3: blur_h/blur_v. rg constants (all 60 f32 + radius) derived in
+  Rust f64 = BIT-EXACT vs oracle dump. Rust transcription of FastGaussian1D's 3-phase form
+  (lane-0 border / 4-output unrolled / remainder) + VerticalBlock naive form = BIT-EXACT vs
+  dumps (cpu_form.rs, drift 0.0). GPU blur vs dumps ≤1.07e-6 (bar 2e-6); s8 bit-exact.
+  Synthetic battery (7 sizes × 5 patterns incl. odd/near-cutoff) GPU vs Rust ≤1.5e-6.
+  Full workspace suite green (6 tests).
+- Deviated from plan: naive-form-only blur was insufficient (3.2e-6 > 2e-6 bar) → executed the
+  plan's escalation: transcribed the CPU 4-output unrolled expansion (mul_prev/mul_prev2/mul_in
+  via a 64-float rg SSBO). Residual: group-loop lanes drift ≤1 ulp on ~1% of pixels on RDNA2
+  (border/remainder/vertical bit-exact; SPIR-V verified faithful mul+fma sequence — driver
+  scheduling). Bounded, within ladder; revisit only if score parity demands.
+- Blocked / open question: none.
+- Next: Phase E — maps_combine.comp (ssim d f32-semantics + edge d1 f32) + fused multiply
+  inputs; single-scale norms (CPU f64, source accumulation order) vs dumps ≤1e-6; measure the
+  documented double→float edge deviation; range audit (no denormals in real data, FTZ-safe).

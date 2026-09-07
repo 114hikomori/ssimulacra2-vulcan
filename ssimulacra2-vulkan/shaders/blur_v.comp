@@ -1,0 +1,52 @@
+#version 450
+// Vertical recursive-Gaussian pass, one thread per image column (3*w threads).
+// Naive recurrence form of VerticalBlock (gauss_blur.cc:254-373):
+// y = fma(n2, sum, fma(-d1, y1, -y2)); border semantics: top<0 -> SingleInput
+// (no add); bottom OOB -> TwoInputs with zero row (add happens); interior add.
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PC {
+  uint w;
+  uint h;
+  uint radius;
+};
+
+layout(set = 0, binding = 0) readonly buffer In { float src[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { float dst[]; };
+layout(set = 0, binding = 2) readonly buffer Rg { float rg[]; };
+
+void main() {
+  uint q = gl_GlobalInvocationID.x;
+  if (q >= 3u * w) { return; }
+  uint c = q / w;
+  uint col = q % w;
+  uint base = c * w * h + col;
+  int N = int(radius);
+  int len = int(h);
+
+  float y1[3] = float[3](0.0, 0.0, 0.0);
+  float y2[3] = float[3](0.0, 0.0, 0.0);
+  for (int n = -N + 1; n < len; ++n) {
+    int top = n - N - 1;
+    int bottom = n + N - 1;
+    float sum;
+    if (top < 0) {
+      sum = (bottom < len) ? src[base + uint(bottom) * w] : 0.0;
+    } else if (bottom >= len) {
+      sum = src[base + uint(top) * w] + 0.0;
+    } else {
+      sum = src[base + uint(top) * w] + src[base + uint(bottom) * w];
+    }
+    float o[3];
+    for (int k = 0; k < 3; ++k) {
+      float t = fma(-rg[12 + 4 * k], y1[k], -y2[k]);
+      t = fma(rg[4 * k], sum, t);
+      y2[k] = y1[k];
+      y1[k] = t;
+      o[k] = t;
+    }
+    if (n >= 0) {
+      dst[base + uint(n) * w] = o[0] + (o[1] + o[2]);
+    }
+  }
+}

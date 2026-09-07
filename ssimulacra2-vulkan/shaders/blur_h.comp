@@ -1,0 +1,92 @@
+#version 450
+// Horizontal recursive-Gaussian pass, one thread per image row (3*h threads).
+// Exact transcription of FastGaussian1D (gauss_blur.cc:40-201): lane-0 border
+// loop, 4-output unrolled interior, lane-0 remainder; folded input
+// in[n-N-1]+in[n+N-1], zero padding, scan from n=-N+1, zero ring state.
+// rg layout (64 f32): n2,d1,mul_prev,mul_prev2,mul_in each 3 sections x 4
+// lanes (broadcast x4, index 4*k+lane), base offsets 0,12,24,36,48.
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PC {
+  uint w;
+  uint h;
+  uint radius;
+};
+
+layout(set = 0, binding = 0) readonly buffer In { float src[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { float dst[]; };
+layout(set = 0, binding = 2) readonly buffer Rg { float rg[]; };
+
+// one scan step in lane-0 (border/remainder) form; returns section outputs via outs
+void step0(int n, int N, uint base, out float o[3], inout float y1[3], inout float y2[3]) {
+  int left = n - N - 1;
+  int right = n + N - 1;
+  float lv = (left >= 0) ? src[base + uint(left)] : 0.0;
+  float rv = (right < int(w)) ? src[base + uint(right)] : 0.0;
+  float sum = lv + rv;
+  for (int k = 0; k < 3; ++k) {
+    float t = sum * rg[48 + 4 * k];
+    t = fma(rg[36 + 4 * k], y2[k], t);
+    t = fma(rg[24 + 4 * k], y1[k], t);
+    y2[k] = y1[k];
+    y1[k] = t;
+    o[k] = t;
+  }
+}
+
+void main() {
+  uint r = gl_GlobalInvocationID.x;
+  if (r >= 3u * h) { return; }
+  uint c = r / h;
+  uint row = r % h;
+  uint base = c * w * h + row * w;
+  int N = int(radius);
+  int len = int(w);
+
+  float y1[3] = float[3](0.0, 0.0, 0.0);
+  float y2[3] = float[3](0.0, 0.0, 0.0);
+  int n = -N + 1;
+  int first_aligned = ((N + 1 + 3) / 4) * 4;
+
+  // border
+  for (; n < min(first_aligned, len); ++n) {
+    float o[3];
+    step0(n, N, base, o, y1, y2);
+    if (n >= 0) {
+      dst[base + uint(n)] = o[0] + (o[1] + o[2]);
+    }
+  }
+
+  // unrolled groups of 4 (no bounds checks needed in this range)
+  for (; n < len - N + 1 - 3; n += 4) {
+    float sums[4];
+    for (int j = 0; j < 4; ++j) {
+      sums[j] = src[base + uint(n + j) - uint(N + 1)] + src[base + uint(n + j + N - 1)];
+    }
+    float outs[3][4];
+    for (int k = 0; k < 3; ++k) {
+      for (int l = 0; l < 4; ++l) {
+        float o = sums[0] * rg[48 + 4 * k + l];
+        for (int j = 1; j < 4; ++j) {
+          float cf = (l >= j) ? rg[48 + 4 * k + l - j] : 0.0;
+          o = fma(cf, sums[j], o);
+        }
+        o = fma(rg[36 + 4 * k + l], y2[k], o);
+        o = fma(rg[24 + 4 * k + l], y1[k], o);
+        outs[k][l] = o;
+      }
+      y2[k] = outs[k][2];
+      y1[k] = outs[k][3];
+    }
+    for (int l = 0; l < 4; ++l) {
+      dst[base + uint(n + l)] = outs[0][l] + (outs[1][l] + outs[2][l]);
+    }
+  }
+
+  // remainder
+  for (; n < len; ++n) {
+    float o[3];
+    step0(n, N, base, o, y1, y2);
+    dst[base + uint(n)] = o[0] + (o[1] + o[2]);
+  }
+}
