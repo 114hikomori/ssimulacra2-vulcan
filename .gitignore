@@ -1,0 +1,16 @@
+# C++ build outputs
+build/
+ssimulacra2
+ssimulacra2.exe
+
+# Rust workspace (Vulkan port crate, when added)
+target/
+
+# golden/intermediate dump comparisons (M0 harness)
+dumps/
+
+# secrets
+.env
+
+# Serena MCP tool state — local tooling, not repo content
+.serena/
