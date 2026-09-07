@@ -82,3 +82,25 @@ list owns the ids.
 - Next: Phase B — Rust workspace + clean-room ash context (serialize instance creation — AMD
   driver fact), staging, ×2 smoke shader (glslc 1.4.357.0, checked-in .spv), green on RX
   6600M locally; lavapipe leg deferred to CI (not available on this host, sibling precedent).
+
+## 2026-09-08 — M1 ✅ (real-GPU leg; lavapipe deferred to CI)
+
+- Done: Phase B complete. Rust workspace + `ssimulacra2-vulkan` crate (ash 0.38.0, clean-room
+  context.rs/pipeline.rs — instance/device/queue, discrete-first selection, staging
+  upload/readback, one-shot fence submits, per-call compute dispatch; serialized context
+  creation per AMD driver fact). Smoke ×2 shader (glslc → checked-in .spv) element-exact on
+  AMD Radeon RX 6600M incl. ±0/±inf/MAX÷4 bit-compare; 3 consecutive debug runs + 1 release
+  run green; validation layer ACTIVE in debug and clean after fix. Validation caught a real
+  bug pre-commit: device buffers from create_buffer_f32 lacked TRANSFER_SRC → readback copy
+  was UB (VUID-vkCmdCopyBuffer-srcBuffer-00118); fixed by adding the usage flag.
+- Deviated from plan: (1) gpu-allocator deferred — manual vkAllocateMemory is sufficient for
+  planar SSBOs; revisit at Phase H if fragmentation measured (dependency-minimal per AGENTS 8).
+  (2) ash 0.38 API rework (no builder(); ::default()+setters, SPIR-V as &[u32]) — learned from
+  installed source, not memory. (3) NEW DRIVER FACT (recorded): AMD RDNA2 shaders FLUSH
+  DENORMALS TO ZERO (1.4e-45×2→0); GLSL has no FTZ control. Data-range proof that denormals
+  never occur (XYB ~0..1, kC2=0.0009 floor) must be re-asserted in Phase E range audit.
+  (4) lavapipe leg deferred to CI (host lacks it; sibling precedent M1).
+- Blocked / open question: none.
+- Next: Phase C — xyb_positive.comp: opsin premul (assert vs dumped rg/premul constants),
+  CubeRootAndAdd op-for-op transcription (bit-trick seed, 3 NR, final iter, r²x+add),
+  clamp order, X/Y/B mix, MakePositiveXYB order; parity ≤1e-6 vs dumps/photo r0 xyb planes.

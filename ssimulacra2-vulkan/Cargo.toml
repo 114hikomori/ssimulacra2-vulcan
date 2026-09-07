@@ -1,0 +1,11 @@
+[package]
+name = "ssimulacra2-vulkan"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Vulkan compute backend for SSIMULACRA2 (clean-room port; oracle: ../src C++ reference)"
+
+[dependencies]
+ash = "0.38.0"
+
+[dev-dependencies]
