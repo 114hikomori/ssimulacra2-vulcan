@@ -21,6 +21,18 @@ impl VkContext {
         buffers: &[&GpuBuffer],
         groups_x: u32,
     ) -> Result<(), String> {
+        self.run_compute_push(spv, entry, buffers, groups_x, &[])
+    }
+
+    /// As `run_compute`, with raw push-constant bytes (must be 4-byte aligned).
+    pub fn run_compute_push(
+        &self,
+        spv: &[u8],
+        entry: &std::ffi::CStr,
+        buffers: &[&GpuBuffer],
+        groups_x: u32,
+        push: &[u8],
+    ) -> Result<(), String> {
         let device = self.device_interface();
         let words = spv_words(spv);
         unsafe {
@@ -46,9 +58,19 @@ impl VkContext {
                     None,
                 )
                 .map_err(|e| format!("dsl: {e:?}"))?;
+            let pc = if push.is_empty() {
+                None
+            } else {
+                Some(vk::PushConstantRange::default()
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                    .offset(0)
+                    .size(push.len() as u32))
+            };
             let pl = device
                 .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default().set_layouts(std::slice::from_ref(&dsl)),
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(std::slice::from_ref(&dsl))
+                        .push_constant_ranges(pc.as_slice()),
                     None,
                 )
                 .map_err(|e| format!("pipeline layout: {e:?}"))?;
@@ -108,6 +130,15 @@ impl VkContext {
 
             self.one_shot(|cb| {
                 device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipeline);
+                if !push.is_empty() {
+                    device.cmd_push_constants(
+                        cb,
+                        pl,
+                        vk::ShaderStageFlags::COMPUTE,
+                        0,
+                        push,
+                    );
+                }
                 device.cmd_bind_descriptor_sets(
                     cb,
                     vk::PipelineBindPoint::COMPUTE,

@@ -1,0 +1,75 @@
+#version 450
+// Linear RGB (plane-major) -> XYB -> positive XYB rescale.
+// Transcription of enc_xyb.cc LinearRGBToXYB + ssimulacra2.cc MakePositiveXYB,
+// including the 6-ulp CubeRootAndAdd (fast_math-inl.h:173-209) op-for-op.
+// "positive" != 0 applies the MakePositiveXYB step (B uses pre-shift Y).
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PC {
+  float m[9];             // premul absorbance rows (matrix * IT/255), row-major r,g,b cols
+  float bias[3];          // opsin absorbance bias (NOT premul)
+  float negcbrt[3];       // -cbrt(bias)
+  uint n;                 // pixel count
+  uint positive;          // apply MakePositiveXYB
+};
+
+layout(set = 0, binding = 0) readonly buffer In { float lin[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { float xyb[]; };
+
+// CubeRootAndAdd(x, add): bit-trick seed + 3 Newton iterations + final
+// iteration + r2*x+add. Max error 6 ulp BY DESIGN (matches oracle; do not
+// "improve" with pow or a more accurate cbrt). x must be >= 0.
+float cbrt_and_add(float x, float add) {
+  const float k1_3 = 1.0 / 3.0;
+  const float k4_3 = 4.0 / 3.0;
+  int m1 = floatBitsToInt(x);
+  int m2 = 0x54800000 - ((m1 >> 23) * 0x002AAAAA);
+  float r = (m1 == 0) ? 0.0 : intBitsToFloat(m2);
+  for (int i = 0; i < 3; i++) {
+    float r2 = r * r;
+    float r4 = r2 * r2;
+    r = fma(-(k1_3 * x), r4, k4_3 * r);
+  }
+  float r2 = r * r;
+  float r4 = r2 * r2;
+  r = fma(k1_3, fma(-x, r4, r), r);
+  r2 = r * r;
+  return fma(r2, x, add);
+}
+
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= n) { return; }
+  uint plane = n;  // stride between planes
+  float r = lin[i];
+  float g = lin[plane + i];
+  float b = lin[2u * plane + i];
+
+  // OpsinAbsorbance: mixed = M * rgb + bias, fma chain innermost-b (enc_xyb.cc:61-63)
+  float mixed0 = fma(m[0], r, fma(m[1], g, fma(m[2], b, bias[0])));
+  float mixed1 = fma(m[3], r, fma(m[4], g, fma(m[5], b, bias[1])));
+  float mixed2 = fma(m[6], r, fma(m[7], g, fma(m[8], b, bias[2])));
+
+  mixed0 = max(mixed0, 0.0);  // ZeroIfNegative (enc_xyb.cc:86-88)
+  mixed1 = max(mixed1, 0.0);
+  mixed2 = max(mixed2, 0.0);
+
+  mixed0 = cbrt_and_add(mixed0, negcbrt[0]);
+  mixed1 = cbrt_and_add(mixed1, negcbrt[1]);
+  mixed2 = cbrt_and_add(mixed2, negcbrt[2]);
+
+  // StoreXYB (enc_xyb.cc:70-73)
+  float x = 0.5 * (mixed0 - mixed1);
+  float y = 0.5 * (mixed0 + mixed1);
+  float bb = mixed2;
+
+  if (positive != 0u) {
+    // MakePositiveXYB order (ssimulacra2.cc:215-217): B first (pre-shift Y)
+    bb = (bb - y) + 0.55;
+    x = fma(x, 14.0, 0.42);
+    y = y + 0.01;
+  }
+  xyb[i] = x;
+  xyb[plane + i] = y;
+  xyb[2u * plane + i] = bb;
+}
