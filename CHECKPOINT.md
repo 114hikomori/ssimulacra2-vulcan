@@ -30,3 +30,28 @@ list owns the ids.
   `ssimulacra2-vulkan-fable-plan.md` (phases, exit observations, tolerance policy, reuse
   boundary, milestones replacing AGENTS.md §9). M0 exit observation after that: CPU golden
   dumps/scores generated twice, byte-for-byte reproducible.
+
+## 2026-09-08 — M0 (in progress: execution plan drafted)
+
+- Done: `ssimulacra2-vulkan-fable-plan.md` drafted (20 sections, mirroring the dssim-vulkan
+  plan's shape). Built on a full read of `src/ssimulacra2.{h,cc}` (491 lines) plus
+  `src/lib/jxl/{gauss_blur,enc_xyb,opsin_params,fast_math-inl}.h/cc` — every constant in its
+  §2 is file:line-cited from this session's reads. It settles the two open questions from the
+  previous entry: (1) stack = Rust + ash + raw GLSL (glslc-pinned, checked-in .spv), cubecl
+  rejected on FP-transcription-control grounds + unproven on this host; (2) reuse boundary =
+  dssim-vulkan is AGPL-3.0 → design-lessons-only, clean-room Rust, firewall written into plan
+  §15. Parity strategy = oracle-dump-defined (C++ binary with default-off `#ifdef
+  SSIMULACRA2_DUMPS` patch; GPU spatial core; CPU-f64 norms/weights/score stay authoritative;
+  identity contract = exactly 100.0). Milestones §16 match AGENTS.md §9.
+- Deviated from plan: none yet (plan is a draft, not approved; no code touched). Notable
+  findings pre-empted in the draft: research notes' FIR-blur suggestion contradicts the
+  reference's recursive IIR (plan targets the recurrence instead); Downsample edge
+  clamp-replicates and normalizes by full 4 (not dssim's floor-drop); CLI alpha path is
+  min(score@bg0.1, score@bg0.9), never the 0.5 default; missing scales shift the 108-weight
+  indices; `CubeRootAndAdd` is a deliberate 6-ulp Newton polynomial that must be transcribed,
+  not "improved".
+- Blocked / open question: gray-input flow through `ImageBundle`→`ToXYB` unresolved by reading
+  — pinned as a Phase A oracle experiment (plan §2). `SSIMULACRA2_VULKAN_PORT_PLAN.md` (full
+  citation trail) still unwritten.
+- Next: human review/approval of the fable-plan → write `SSIMULACRA2_VULKAN_PORT_PLAN.md` →
+  Phase A (oracle build in WSL2/CI + dump patch + fixture corpus) for M0 exit.
