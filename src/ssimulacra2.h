@@ -17,6 +17,9 @@ struct MsssimScale {
 
 struct Msssim {
   std::vector<MsssimScale> scales;
+#ifdef SSIMULACRA2_DUMPS
+  int dump_run = 0;  // routes Score() dumps to the right run (alpha path)
+#endif
 
   double Score() const;
 };

@@ -33,6 +33,105 @@ Design:
 #include "lib/jxl/gauss_blur.h"
 #include "lib/jxl/image_ops.h"
 
+// *** Local, default-off instrumentation for the Vulkan port (see oracle/README.md).
+// *** Compiled out entirely unless -DSSIMULACRA2_DUMPS; the default binary and all
+// *** numeric code paths are unchanged. Writes per-stage dumps to $SSIMULACRA2_DUMP_DIR.
+#ifdef SSIMULACRA2_DUMPS
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <vector>
+
+namespace {
+int g_dump_run = -1;
+int g_dump_scale = 0;
+
+inline const char *DumpDir() {
+  const char *d = getenv("SSIMULACRA2_DUMP_DIR");
+  return (d != nullptr && d[0] != '\0') ? d : nullptr;
+}
+
+inline void DumpPut(FILE *f, uint32_t v) {
+  for (int i = 0; i < 4; ++i) fputc((v >> (8 * i)) & 0xFF, f);
+}
+inline void DumpPut64(FILE *f, uint64_t v) {
+  for (int i = 0; i < 8; ++i) fputc((v >> (8 * i)) & 0xFF, f);
+}
+
+// 48-byte header: magic "S2D1", dtype (3=u32,4=f32,8=f64), xsize, ysize,
+// channels, stride(elements), payload_bytes(u64), reserved(u64), reserved(u64).
+inline FILE *DumpOpen(const char *name, uint32_t dtype, size_t xsize,
+                      size_t ysize, size_t channels, uint64_t payload_bytes) {
+  const char *dir = DumpDir();
+  if (dir == nullptr) return nullptr;
+  char path[2048];
+  snprintf(path, sizeof(path), "%s/r%d_%s.bin", dir, g_dump_run, name);
+  FILE *f = fopen(path, "wb");
+  if (f == nullptr) {
+    fprintf(stderr, "SSIMULACRA2_DUMPS: cannot open %s\n", path);
+    abort();
+  }
+  DumpPut(f, 0x31443253u);
+  DumpPut(f, dtype);
+  DumpPut(f, (uint32_t)xsize);
+  DumpPut(f, (uint32_t)ysize);
+  DumpPut(f, (uint32_t)channels);
+  DumpPut(f, (uint32_t)xsize);
+  DumpPut64(f, payload_bytes);
+  DumpPut64(f, 0);
+  DumpPut64(f, 0);
+  return f;
+}
+
+inline void DumpImage3F(const char *tag, const jxl::Image3F &img) {
+  if (DumpDir() == nullptr) return;
+  size_t planes = 0;
+  for (size_t c = 0; c < 3; ++c) {
+    if (img.Plane(c).xsize() == 0 || img.Plane(c).ysize() == 0) break;
+    ++planes;
+  }
+  char name[160];
+  snprintf(name, sizeof(name), "%s_s%d", tag, g_dump_scale);
+  const uint64_t bytes =
+      (uint64_t)planes * img.xsize() * img.ysize() * sizeof(float);
+  FILE *f = DumpOpen(name, 4, img.xsize(), img.ysize(), planes, bytes);
+  if (f == nullptr) return;
+  for (size_t c = 0; c < planes; ++c) {
+    for (size_t y = 0; y < img.ysize(); ++y) {
+      fwrite(img.ConstPlaneRow(c, y), sizeof(float), img.xsize(), f);
+    }
+  }
+  fclose(f);
+}
+
+inline void DumpF64s(const char *tag, const double *v, size_t n) {
+  if (DumpDir() == nullptr) return;
+  char name[160];
+  snprintf(name, sizeof(name), "%s_s%d", tag, g_dump_scale);
+  FILE *f = DumpOpen(name, 8, n, 1, 1, (uint64_t)n * sizeof(double));
+  if (f == nullptr) return;
+  fwrite(v, sizeof(double), n, f);
+  fclose(f);
+}
+
+inline void DumpMeta(const char *fmt, ...) {
+  const char *dir = DumpDir();
+  if (dir == nullptr) return;
+  char path[2048];
+  snprintf(path, sizeof(path), "%s/meta.txt", dir);
+  FILE *f = fopen(path, "a");
+  if (f == nullptr) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fclose(f);
+}
+}  // namespace
+#endif  // SSIMULACRA2_DUMPS
+
 namespace {
 
 using jxl::Image3F;
@@ -82,7 +181,22 @@ void Multiply(const Image3F &a, const Image3F &b, Image3F *mul) {
 class Blur {
 public:
   Blur(const size_t xsize, const size_t ysize)
-      : rg_(jxl::CreateRecursiveGaussian(1.5)), temp_(xsize, ysize) {}
+      : rg_(jxl::CreateRecursiveGaussian(1.5)), temp_(xsize, ysize) {
+#ifdef SSIMULACRA2_DUMPS
+    if (DumpDir() != nullptr) {
+      FILE *f = DumpOpen("rg_s0", 4, 12, 5, 1, 5 * 12 * sizeof(float));
+      fwrite(rg_->n2, sizeof(float), 12, f);
+      fwrite(rg_->d1, sizeof(float), 12, f);
+      fwrite(rg_->mul_prev, sizeof(float), 12, f);
+      fwrite(rg_->mul_prev2, sizeof(float), 12, f);
+      fwrite(rg_->mul_in, sizeof(float), 12, f);
+      fclose(f);
+      FILE *fr = DumpOpen("rg_radius_s0", 3, 1, 1, 1, sizeof(uint32_t));
+      DumpPut(fr, (uint32_t)rg_->radius);
+      fclose(fr);
+    }
+#endif
+  }
 
   void operator()(const ImageF &in, ImageF *JXL_RESTRICT out) {
     jxl::ThreadPool *null_pool = nullptr;
@@ -115,6 +229,10 @@ double tothe4th(double x) {
 void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
              const Image3F &s22, const Image3F &s12, double *plane_averages) {
   const double onePerPixels = 1.0 / (m1.ysize() * m1.xsize());
+#ifdef SSIMULACRA2_DUMPS
+  std::vector<double> dmap;
+  if (DumpDir() != nullptr) dmap.resize(m1.xsize() * m1.ysize());
+#endif
   for (size_t c = 0; c < 3; ++c) {
     double sum1[2] = {0.0};
     for (size_t y = 0; y < m1.ysize(); ++y) {
@@ -152,16 +270,38 @@ void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
         d = std::max(d, 0.0);
         sum1[0] += d;
         sum1[1] += tothe4th(d);
+#ifdef SSIMULACRA2_DUMPS
+        if (!dmap.empty()) dmap[y * m1.xsize() + x] = d;
+#endif
       }
     }
     plane_averages[c * 2] = onePerPixels * sum1[0];
     plane_averages[c * 2 + 1] = sqrt(sqrt(onePerPixels * sum1[1]));
+#ifdef SSIMULACRA2_DUMPS
+    if (!dmap.empty()) {
+      char tag[64];
+      snprintf(tag, sizeof(tag), "ssim_d_c%zu_s%d", c, g_dump_scale);
+      FILE *f = DumpOpen(tag, 8, m1.xsize(), m1.ysize(), 1,
+                         dmap.size() * sizeof(double));
+      if (f != nullptr) {
+        fwrite(dmap.data(), sizeof(double), dmap.size(), f);
+        fclose(f);
+      }
+    }
+#endif
   }
+#ifdef SSIMULACRA2_DUMPS
+  DumpF64s("ssim_norms", plane_averages, 6);
+#endif
 }
 
 void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &img2,
                  const Image3F &mu2, double *plane_averages) {
   const double onePerPixels = 1.0 / (img1.ysize() * img1.xsize());
+#ifdef SSIMULACRA2_DUMPS
+  std::vector<double> d1map;
+  if (DumpDir() != nullptr) d1map.resize(img1.xsize() * img1.ysize());
+#endif
   for (size_t c = 0; c < 3; ++c) {
     double sum1[4] = {0.0};
     for (size_t y = 0; y < img1.ysize(); ++y) {
@@ -185,13 +325,31 @@ void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &img2,
         double detail_lost = std::max(-d1, 0.0);
         sum1[2] += detail_lost;
         sum1[3] += tothe4th(detail_lost);
+#ifdef SSIMULACRA2_DUMPS
+        if (!d1map.empty()) d1map[y * img1.xsize() + x] = d1;
+#endif
       }
     }
     plane_averages[c * 4] = onePerPixels * sum1[0];
     plane_averages[c * 4 + 1] = sqrt(sqrt(onePerPixels * sum1[1]));
     plane_averages[c * 4 + 2] = onePerPixels * sum1[2];
     plane_averages[c * 4 + 3] = sqrt(sqrt(onePerPixels * sum1[3]));
+#ifdef SSIMULACRA2_DUMPS
+    if (!d1map.empty()) {
+      char tag[64];
+      snprintf(tag, sizeof(tag), "edge_d1_c%zu_s%d", c, g_dump_scale);
+      FILE *f = DumpOpen(tag, 8, img1.xsize(), img1.ysize(), 1,
+                         d1map.size() * sizeof(double));
+      if (f != nullptr) {
+        fwrite(d1map.data(), sizeof(double), d1map.size(), f);
+        fclose(f);
+      }
+    }
+#endif
   }
+#ifdef SSIMULACRA2_DUMPS
+  DumpF64s("edge_norms", plane_averages, 12);
+#endif
 }
 
 /* Get all components in more or less 0..1 range
@@ -405,6 +563,11 @@ double Msssim::Score() const {
     }
   }
 
+#ifdef SSIMULACRA2_DUMPS
+  g_dump_run = dump_run;
+  g_dump_scale = 0;
+  DumpF64s("score_weighted", &ssim, 1);
+#endif
   ssim = ssim * 0.9562382616834844;
   ssim = 2.326765642916932 * ssim - 0.020884521182843837 * ssim * ssim +
          6.248496625763138e-05 * ssim * ssim * ssim;
@@ -413,12 +576,22 @@ double Msssim::Score() const {
   } else {
     ssim = 100.0;
   }
+#ifdef SSIMULACRA2_DUMPS
+  DumpF64s("score_final", &ssim, 1);
+#endif
   return ssim;
 }
 
 Msssim ComputeSSIMULACRA2(const jxl::ImageBundle &orig,
                           const jxl::ImageBundle &dist, float bg) {
   Msssim msssim;
+#ifdef SSIMULACRA2_DUMPS
+  ++g_dump_run;
+  msssim.dump_run = g_dump_run;
+  g_dump_scale = 0;
+  DumpMeta("run=%d version=2.1 xsize=%zu ysize=%zu bg=%.3f\n", g_dump_run,
+           (size_t)orig.xsize(), (size_t)orig.ysize(), (double)bg);
+#endif
 
   jxl::Image3F img1(orig.xsize(), orig.ysize());
   jxl::Image3F img2(img1.xsize(), img1.ysize());
@@ -437,11 +610,23 @@ Msssim ComputeSSIMULACRA2(const jxl::ImageBundle &orig,
                               jxl::GetJxlCms()));
   JXL_CHECK(dist2.TransformTo(jxl::ColorEncoding::LinearSRGB(dist2.IsGray()),
                               jxl::GetJxlCms()));
+#ifdef SSIMULACRA2_DUMPS
+  DumpImage3F("linear_orig", *orig2.color());
+  DumpImage3F("linear_dist", *dist2.color());
+#endif
 
   jxl::ToXYB(orig2, nullptr, &img1, jxl::GetJxlCms(), nullptr);
   jxl::ToXYB(dist2, nullptr, &img2, jxl::GetJxlCms(), nullptr);
+#ifdef SSIMULACRA2_DUMPS
+  DumpImage3F("xyb_pre_orig", img1);
+  DumpImage3F("xyb_pre_dist", img2);
+#endif
   MakePositiveXYB(img1);
   MakePositiveXYB(img2);
+#ifdef SSIMULACRA2_DUMPS
+  DumpImage3F("xyb_orig", img1);
+  DumpImage3F("xyb_dist", img2);
+#endif
 
   Image3F mul(img1.xsize(), img1.ysize());
   Blur blur(img1.xsize(), img1.ysize());
@@ -450,6 +635,9 @@ Msssim ComputeSSIMULACRA2(const jxl::ImageBundle &orig,
     if (img1.xsize() < 8 || img1.ysize() < 8) {
       break;
     }
+#ifdef SSIMULACRA2_DUMPS
+    g_dump_scale = scale;
+#endif
     if (scale) {
       orig2.SetFromImage(Downsample(*orig2.color(), 2, 2),
                          jxl::ColorEncoding::LinearSRGB(orig2.IsGray()));
@@ -459,8 +647,16 @@ Msssim ComputeSSIMULACRA2(const jxl::ImageBundle &orig,
       img2.ShrinkTo(orig2.xsize(), orig2.ysize());
       jxl::ToXYB(orig2, nullptr, &img1, jxl::GetJxlCms(), nullptr);
       jxl::ToXYB(dist2, nullptr, &img2, jxl::GetJxlCms(), nullptr);
+#ifdef SSIMULACRA2_DUMPS
+      DumpImage3F("xyb_pre_orig", img1);
+      DumpImage3F("xyb_pre_dist", img2);
+#endif
       MakePositiveXYB(img1);
       MakePositiveXYB(img2);
+#ifdef SSIMULACRA2_DUMPS
+      DumpImage3F("xyb_orig", img1);
+      DumpImage3F("xyb_dist", img2);
+#endif
     }
     mul.ShrinkTo(img1.xsize(), img1.ysize());
     blur.ShrinkTo(img1.xsize(), img1.ysize());
@@ -476,12 +672,22 @@ Msssim ComputeSSIMULACRA2(const jxl::ImageBundle &orig,
 
     Image3F mu1 = blur(img1);
     Image3F mu2 = blur(img2);
+#ifdef SSIMULACRA2_DUMPS
+    DumpImage3F("sigma1_sq", sigma1_sq);
+    DumpImage3F("sigma2_sq", sigma2_sq);
+    DumpImage3F("sigma12", sigma12);
+    DumpImage3F("mu1", mu1);
+    DumpImage3F("mu2", mu2);
+#endif
 
     MsssimScale sscale;
     SSIMMap(mu1, mu2, sigma1_sq, sigma2_sq, sigma12, sscale.avg_ssim);
     EdgeDiffMap(img1, mu1, img2, mu2, sscale.avg_edgediff);
     msssim.scales.push_back(sscale);
   }
+#ifdef SSIMULACRA2_DUMPS
+  DumpMeta("run=%d scales=%zu\n", g_dump_run, msssim.scales.size());
+#endif
   return msssim;
 }
 

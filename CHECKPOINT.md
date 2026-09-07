@@ -55,3 +55,30 @@ list owns the ids.
   citation trail) still unwritten.
 - Next: human review/approval of the fable-plan → write `SSIMULACRA2_VULKAN_PORT_PLAN.md` →
   Phase A (oracle build in WSL2/CI + dump patch + fixture corpus) for M0 exit.
+
+## 2026-09-08 — M0 ✅ (Phase A complete)
+
+- Done: M0 exit observation MET, observed. (1) C++ oracle builds NATIVELY on this Windows
+  host (MSYS2 ucrt64: gcc 15.2 + pacman highway/lcms2/libpng/libjpeg-turbo) — plan's WSL2/CI
+  assumption superseded (deviation below). (2) `#ifdef SSIMULACRA2_DUMPS` patch in
+  src/ssimulacra2.{h,cc}: per-stage dumps (linear input, rg constants, xyb_pre/xyb, 5 blurred
+  planes, per-pixel ssim-d + edge-d1 f64 maps, per-scale norms, weighted+final score,
+  meta.txt). (3) Fixture corpus created + committed (`tests/fixtures/`, 26 PNGs, 3.1 MB,
+  deterministic generator `oracle/gen_fixtures.py`): photo/grad/noise/step/odd, near-cutoff
+  s8/s9/s12/s15, sub-cutoff s7 (CLI-reject), alpha, gray, big 2048², identical. (4) Goldens:
+  1008 dump files × 2 runs, SHA-256 all equal (byte-reproducible); CLI scores span
+  1.24..100.00 incl. exact-100 identity + s7 rejection. (5) Default-path invariance proven:
+  14/14 scores identical pre/post patch AND asm diff = 5287 lines with exactly 2 differing
+  instructions (JXL_CHECK `__LINE__` immediates 436→609, 438→611) — PE byte-identity is
+  unattainable for any in-file patch (asserts embed line numbers); asm-identity is the
+  achieved bar. Dump-build scores == default scores.
+- Deviated from plan: (a) oracle builds native ucrt64, not WSL2/CI (better: no VM); (b) M0
+  "byte-identical default binary" restated as asm-identical-except-__LINE__ (reason above,
+  evidence in oracle/README.md); (c) `big` fixture is score-only (dumps would be >1.5 GB).
+- Blocked / open question: none. Gray question CLOSED by dump evidence: gray inputs reach XYB
+  as 3 replicated planes (ch=3). `SSIMULACRA2_VULKAN_PORT_PLAN.md` still unwritten — its
+  content is now largely inlined in fable-plan §2; will write it as the citation trail during
+  Phase B rather than as a gate.
+- Next: Phase B — Rust workspace + clean-room ash context (serialize instance creation — AMD
+  driver fact), staging, ×2 smoke shader (glslc 1.4.357.0, checked-in .spv), green on RX
+  6600M locally; lavapipe leg deferred to CI (not available on this host, sibling precedent).

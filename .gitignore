@@ -1,5 +1,6 @@
 # C++ build outputs
 build/
+build-*/
 ssimulacra2
 ssimulacra2.exe
 
