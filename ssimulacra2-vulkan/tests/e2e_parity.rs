@@ -52,22 +52,23 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     let want = p("score_final_s0").f64_data[0];
     let wd = (weighted_sum(&scales) - p("score_weighted_s0").f64_data[0]).abs();
     println!("{fixture} r{run}: weighted drift {wd:e}, score {got:.8} vs {want:.8} (drift {:e})", (got - want).abs());
+    // Identity is driver-independent BY CONSTRUCTION after the num_s fix in
+    // maps_combine.comp (BUG_HUNT F4 root cause, CI run #8): identical inputs
+    // make every kernel output bitwise equal and num_s/denom_s the same
+    // expression tree, so d == 0 exactly on any device. Asserted everywhere.
+    if expect_exact_100 {
+        assert_eq!(got, 100.0, "identity must be exactly 100");
+        assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
+    }
     if strict {
-        if expect_exact_100 {
-            assert_eq!(got, 100.0, "identity must be exactly 100");
-            assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
-        }
         assert!((got - want).abs() <= 1e-5, "{fixture} score drift");
         assert!(wd <= w_bar, "{fixture} weighted drift {wd:e}");
     } else {
-        // CI run #5 (2026-09-08): llvmpipe returns 99.984 for the identity
-        // fixture despite the symmetric-computation argument - some step
-        // diverges between the two identical dispatches on that driver.
-        // Open question logged in CHECKPOINT; score/identity asserts are
-        // IEEE-fma-only until understood. Norms/weighted sanity still gate
-        // (passed on lavapipe: norms <=2.9e-4, weighted <=1.1e-2).
+        // Non-IEEE-fma devices (llvmpipe fma measured ~46 ulp sloppy): ulp-level
+        // score parity is impossible by driver semantics; norms/weighted sanity
+        // still gate and score drift is printed for visibility.
         assert!(wd <= w_bar, "{fixture} weighted drift {wd:e}");
-        println!("NOTE: {fixture} score/identity asserts skipped (non-IEEE-fma device)");
+        println!("NOTE: {fixture} score assert skipped (non-IEEE-fma device)");
     }
 }
 
