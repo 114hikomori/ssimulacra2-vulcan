@@ -11,9 +11,12 @@ fn dump_path(fixture: &str, name: &str) -> String {
 
 fn max_abs_diff_f64(a: &[f64], b: &[f64]) -> (f64, usize) {
     let mut worst = (0f64, 0usize);
-    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+    for (i, (x, y)) in a.iter().zip(b).enumerate() {
         let d = (x - y).abs();
-        if d > worst.0 { worst = (d, i); }
+        // F3 (BUG_HUNT): NaN-aware (NaN comparisons are false -> would skip).
+        if d.is_nan() || d > worst.0 {
+            worst = (d, i);
+        }
     }
     worst
 }
@@ -24,6 +27,8 @@ fn range_audit(name: &str, slices: &[&[f32]]) -> (f32, f32) {
     let mut maxabs = 0f32;
     for s in slices {
         for &v in *s {
+            // F3 (BUG_HUNT): NaN must not be invisible to the audit.
+            assert!(!v.is_nan(), "NaN value in {name} range audit");
             let a = v.abs();
             if a > 0.0 && a < minpos { minpos = a; }
             if a > maxabs { maxabs = a; }

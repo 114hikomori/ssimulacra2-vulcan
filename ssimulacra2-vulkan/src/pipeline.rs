@@ -11,8 +11,44 @@ fn spv_words(bytes: &[u8]) -> Vec<u32> {
         .collect()
 }
 
+/// F8 (BUG_HUNT): destroys every handle created so far, on every path.
+struct PassRes<'a> {
+    device: &'a ash::Device,
+    shm: Option<vk::ShaderModule>,
+    dsl: Option<vk::DescriptorSetLayout>,
+    pl: Option<vk::PipelineLayout>,
+    pipe: Option<vk::Pipeline>,
+    dp: Option<vk::DescriptorPool>,
+}
+
+impl Drop for PassRes<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(dp) = self.dp {
+                self.device.destroy_descriptor_pool(dp, None);
+            }
+            if let Some(p) = self.pipe {
+                self.device.destroy_pipeline(p, None);
+            }
+            if let Some(pl) = self.pl {
+                self.device.destroy_pipeline_layout(pl, None);
+            }
+            if let Some(dsl) = self.dsl {
+                self.device.destroy_descriptor_set_layout(dsl, None);
+            }
+            if let Some(shm) = self.shm {
+                self.device.destroy_shader_module(shm, None);
+            }
+        }
+    }
+}
+
 impl VkContext {
     /// Dispatch one compute pass over N storage buffers (binding i = buffers[i]).
+    /// `groups_x` is the number of 64-invocation groups needed for the flat
+    /// element count; it is split across x/y so the dispatch stays within
+    /// maxComputeWorkGroupCount (F1: shaders read gl_NumWorkGroups.x to
+    /// reconstruct the flat index).
     /// Returns Err with a readable reason on any failure.
     pub fn run_compute(
         &self,
@@ -35,13 +71,34 @@ impl VkContext {
     ) -> Result<(), String> {
         let device = self.device_interface();
         let words = spv_words(spv);
+
+        let gx = groups_x.min(self.max_groups_x()).max(1);
+        let gy = groups_x.div_ceil(gx);
+        if gy > 65535 {
+            return Err(format!(
+                "dispatch of {groups_x} groups exceeds device 2D workgroup limit \
+                 ({}/{})",
+                self.max_groups_x(), 65535
+            ));
+        }
+
         unsafe {
-            let shm = device
-                .create_shader_module(
-                    &vk::ShaderModuleCreateInfo::default().code(&words),
-                    None,
-                )
-                .map_err(|e| format!("shader module: {e:?}"))?;
+            let mut res = PassRes {
+                device,
+                shm: None,
+                dsl: None,
+                pl: None,
+                pipe: None,
+                dp: None,
+            };
+            res.shm = Some(
+                device
+                    .create_shader_module(
+                        &vk::ShaderModuleCreateInfo::default().code(&words),
+                        None,
+                    )
+                    .map_err(|e| format!("shader module: {e:?}"))?,
+            );
 
             let binds: Vec<vk::DescriptorSetLayoutBinding> = (0..buffers.len())
                 .map(|i| {
@@ -52,12 +109,15 @@ impl VkContext {
                         .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 })
                 .collect();
-            let dsl = device
-                .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&binds),
-                    None,
-                )
-                .map_err(|e| format!("dsl: {e:?}"))?;
+            res.dsl = Some(
+                device
+                    .create_descriptor_set_layout(
+                        &vk::DescriptorSetLayoutCreateInfo::default().bindings(&binds),
+                        None,
+                    )
+                    .map_err(|e| format!("dsl: {e:?}"))?,
+            );
+            let dsl = res.dsl.unwrap();
             let pc = if push.is_empty() {
                 None
             } else {
@@ -66,40 +126,48 @@ impl VkContext {
                     .offset(0)
                     .size(push.len() as u32))
             };
-            let pl = device
-                .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(std::slice::from_ref(&dsl))
-                        .push_constant_ranges(pc.as_slice()),
-                    None,
-                )
-                .map_err(|e| format!("pipeline layout: {e:?}"))?;
+            res.pl = Some(
+                device
+                    .create_pipeline_layout(
+                        &vk::PipelineLayoutCreateInfo::default()
+                            .set_layouts(std::slice::from_ref(&dsl))
+                            .push_constant_ranges(pc.as_slice()),
+                        None,
+                    )
+                    .map_err(|e| format!("pipeline layout: {e:?}"))?,
+            );
+            let pl = res.pl.unwrap();
             let stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
-                .module(shm)
+                .module(res.shm.unwrap())
                 .name(entry);
             let cpci = vk::ComputePipelineCreateInfo::default().stage(stage).layout(pl);
-            let pipeline = *device
-                .create_compute_pipelines(vk::PipelineCache::null(), &[cpci], None)
-                .map_err(|e| format!("pipeline: {e:?}"))?
-                .first()
-                .ok_or("no pipeline")?;
+            res.pipe = Some(
+                *device
+                    .create_compute_pipelines(vk::PipelineCache::null(), &[cpci], None)
+                    .map_err(|e| format!("pipeline: {e:?}"))?
+                    .first()
+                    .ok_or("no pipeline")?,
+            );
+            let pipeline = res.pipe.unwrap();
 
             let pool_sizes = [vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(buffers.len() as u32)];
-            let dp = device
-                .create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::default()
-                        .pool_sizes(&pool_sizes)
-                        .max_sets(1),
-                    None,
-                )
-                .map_err(|e| format!("dpool: {e:?}"))?;
+            res.dp = Some(
+                device
+                    .create_descriptor_pool(
+                        &vk::DescriptorPoolCreateInfo::default()
+                            .pool_sizes(&pool_sizes)
+                            .max_sets(1),
+                        None,
+                    )
+                    .map_err(|e| format!("dpool: {e:?}"))?,
+            );
             let ds = *device
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(dp)
+                        .descriptor_pool(res.dp.unwrap())
                         .set_layouts(std::slice::from_ref(&dsl)),
                 )
                 .map_err(|e| format!("dsets: {e:?}"))?
@@ -147,14 +215,8 @@ impl VkContext {
                     std::slice::from_ref(&ds),
                     &[],
                 );
-                device.cmd_dispatch(cb, groups_x, 1, 1);
+                device.cmd_dispatch(cb, gx, gy, 1);
             })?;
-
-            device.destroy_descriptor_pool(dp, None);
-            device.destroy_pipeline_layout(pl, None);
-            device.destroy_pipeline(pipeline, None);
-            device.destroy_descriptor_set_layout(dsl, None);
-            device.destroy_shader_module(shm, None);
         }
         Ok(())
     }

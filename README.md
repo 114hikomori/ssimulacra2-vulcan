@@ -1,6 +1,34 @@
 # SSIMULACRA 2 - Structural SIMilarity Unveiling Local And Compression Related Artifacts
 
-Perceptual metric developed by Jon Sneyers (Cloudinary) in July-October 2022, updated in April 2023.
+## Vulkan port (this repository)
+
+This fork adds a Vulkan compute backend (`ssimulacra2-vulkan/`, Rust + ash) that
+reproduces the C++ reference bit-for-bit on IEEE-fma GPUs (see `CHECKPOINT.md`,
+`ssimulacra2-vulkan-fable-plan.md`). The C++ code above is unchanged and remains
+the correctness oracle.
+
+```
+cargo build --release                      # workspace: ssimulacra2-vulkan CLI
+cargo test --workspace                     # parity suite (needs dumps, see below)
+target/release/ssimulacra2-vulkan original.png distorted.png   # GPU path (default)
+target/release/ssimulacra2-vulkan --cpu original.png distorted.png
+```
+
+CLI contract matches the C++ tool: score `%.8f` on stdout, `-inf..100`, alpha
+inputs take the worst of backgrounds 0.1/0.9 (only when the *original* has
+alpha), minimum size 8x8. Input domain: plain 8-bit RGB/RGBA/Grayscale PNGs;
+images carrying iCCP/gAMA/cHRM chunks are rejected with a pointer to the C++
+binary (ICC handling is a documented non-goal). No Vulkan device or GPU failure
+falls back to the CPU path automatically.
+
+Before `cargo test` on a fresh clone, generate the oracle dumps the parity
+tests read (they are gitignored): build the C++ oracle with
+`-DSSIMULACRA2_DUMPS` into `build-dump/` and run `oracle/gen_goldens.sh run1`
+(see `oracle/README.md` for the exact commands on Windows/MSYS2 and Linux).
+CI does this automatically.
+
+Perceptual metric developed by Jon Sneyers (Cloudinary) in July-October 2022,
+updated in April 2023.
 
 ## Usage
 ```

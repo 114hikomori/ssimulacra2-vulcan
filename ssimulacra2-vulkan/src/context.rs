@@ -14,6 +14,7 @@ use std::sync::Mutex;
 /// two threads creating instances concurrently can return VK_INCOMPLETE.
 static CTX_CREATE_LOCK: Mutex<()> = Mutex::new(());
 
+#[derive(Clone, Copy)]
 pub struct GpuBuffer {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
@@ -34,6 +35,8 @@ pub struct VkContext {
     mem_props: vk::PhysicalDeviceMemoryProperties,
     device_name: String,
     fma_ieee: bool,
+    max_groups_x: u32,
+    validation: bool,
 }
 
 fn cstr(s: &'static [u8]) -> &'static CStr {
@@ -54,6 +57,7 @@ impl VkContext {
             .api_version(vk::make_api_version(0, 1, 1, 0));
 
         let mut layer_names: Vec<&'static CStr> = vec![];
+        let mut validation = false;
         if cfg!(debug_assertions) {
             let avail = unsafe { entry.enumerate_instance_layer_properties() }
                 .map_err(|e| format!("layers: {e:?}"))?;
@@ -62,6 +66,7 @@ impl VkContext {
                 CStr::from_ptr(p.layer_name.as_ptr()) == want
             }) {
                 layer_names.push(want);
+                validation = true;
             }
         }
         let layer_ptrs: Vec<*const i8> = layer_names.iter().map(|l| l.as_ptr()).collect();
@@ -121,6 +126,14 @@ impl VkContext {
         let cmd_pool = unsafe { device.create_command_pool(&cpci, None) }
             .map_err(|e| format!("cmdpool: {e:?}"))?;
 
+        // F1 (BUG_HUNT): dispatches must respect maxComputeWorkGroupCount; the
+        // spec minimum is 65535 in x, which 2048^2-class flat dispatches
+        // exceed. Queried here, split into 2D in run_compute_push.
+        let max_groups_x = unsafe { instance.get_physical_device_properties(physical) }
+            .limits
+            .max_compute_work_group_count[0]
+            .max(1) as u32;
+
         Ok(Self {
             entry,
             instance,
@@ -132,6 +145,8 @@ impl VkContext {
             mem_props,
             device_name,
             fma_ieee: false,
+            max_groups_x,
+            validation,
         }
         .with_probe()
         )
@@ -142,6 +157,14 @@ impl VkContext {
     /// bit-for-bit, so ulp-level parity tests must not gate on it.
     fn with_probe(mut self) -> Self {
         self.fma_ieee = self.fma_probe().unwrap_or_default();
+        if cfg!(debug_assertions) {
+            // F2 (BUG_HUNT): make the validation state visible in CI logs -
+            // a silently-absent layer once hid a real VUID violation.
+            eprintln!(
+                "vulkan: device='{}' validation={} fma_ieee={} max_groups_x={}",
+                self.device_name, self.validation, self.fma_ieee, self.max_groups_x
+            );
+        }
         self
     }
 
@@ -170,6 +193,11 @@ impl VkContext {
     /// True if this device's fma matches IEEE correctly-rounded fma.
     pub fn fma_ieee(&self) -> bool {
         self.fma_ieee
+    }
+
+    /// Device's maxComputeWorkGroupCount[0] (F1 dispatch splitting).
+    pub fn max_groups_x(&self) -> u32 {
+        self.max_groups_x
     }
 
     pub fn device_name(&self) -> &str {
@@ -216,31 +244,34 @@ impl VkContext {
                 vk::BufferUsageFlags::TRANSFER_SRC,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )?;
-            let ptr = self
-                .device
-                .map_memory(staging.memory, 0, bytes, vk::MemoryMapFlags::empty())
-                .map_err(|e| format!("map: {e:?}"))?;
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr() as *const u8,
-                ptr as *mut u8,
-                bytes as usize,
-            );
-            self.device.unmap_memory(staging.memory);
-
-            let dev = self.alloc_buffer(
-                bytes,
-                vk::BufferUsageFlags::TRANSFER_DST
-                    | vk::BufferUsageFlags::TRANSFER_SRC
-                    | vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            )?;
-            self.one_shot(|cb| {
-                let reg = vk::BufferCopy::default().size(bytes);
-                self.device.cmd_copy_buffer(cb, staging.buffer, dev.buffer, &[reg]);
-            })?;
+            // F8 (BUG_HUNT): staging must be freed on every path.
+            let built = (|| -> Result<GpuBuffer, String> {
+                let ptr = self
+                    .device
+                    .map_memory(staging.memory, 0, bytes, vk::MemoryMapFlags::empty())
+                    .map_err(|e| format!("map: {e:?}"))?;
+                std::ptr::copy_nonoverlapping(
+                    data.as_ptr() as *const u8,
+                    ptr as *mut u8,
+                    bytes as usize,
+                );
+                self.device.unmap_memory(staging.memory);
+                let dev = self.alloc_buffer(
+                    bytes,
+                    vk::BufferUsageFlags::TRANSFER_DST
+                        | vk::BufferUsageFlags::TRANSFER_SRC
+                        | vk::BufferUsageFlags::STORAGE_BUFFER,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                )?;
+                self.one_shot(|cb| {
+                    let reg = vk::BufferCopy::default().size(bytes);
+                    self.device.cmd_copy_buffer(cb, staging.buffer, dev.buffer, &[reg]);
+                })?;
+                Ok(dev)
+            })();
             self.device.destroy_buffer(staging.buffer, None);
             self.device.free_memory(staging.memory, None);
-            Ok(dev)
+            built
         }
     }
 
@@ -264,23 +295,27 @@ impl VkContext {
                 vk::BufferUsageFlags::TRANSFER_DST,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )?;
-            self.one_shot(|cb| {
-                let reg = vk::BufferCopy::default().size(bytes);
-                self.device.cmd_copy_buffer(cb, buf.buffer, staging.buffer, &[reg]);
-            })?;
-            let ptr = self
-                .device
-                .map_memory(staging.memory, 0, bytes, vk::MemoryMapFlags::empty())
-                .map_err(|e| format!("map: {e:?}"))?;
-            let out = std::slice::from_raw_parts(ptr as *const u8, bytes as usize).to_vec();
-            self.device.unmap_memory(staging.memory);
+            // F8 (BUG_HUNT): staging must be freed on every path.
+            let read = (|| -> Result<Vec<f32>, String> {
+                self.one_shot(|cb| {
+                    let reg = vk::BufferCopy::default().size(bytes);
+                    self.device.cmd_copy_buffer(cb, buf.buffer, staging.buffer, &[reg]);
+                })?;
+                let ptr = self
+                    .device
+                    .map_memory(staging.memory, 0, bytes, vk::MemoryMapFlags::empty())
+                    .map_err(|e| format!("map: {e:?}"))?;
+                let out = std::slice::from_raw_parts(ptr as *const u8, bytes as usize).to_vec();
+                self.device.unmap_memory(staging.memory);
+                let mut v = vec![0f32; out.len() / 4];
+                for (dst, src) in v.iter_mut().zip(out.chunks_exact(4)) {
+                    *dst = f32::from_le_bytes(src.try_into().unwrap());
+                }
+                Ok(v)
+            })();
             self.device.destroy_buffer(staging.buffer, None);
             self.device.free_memory(staging.memory, None);
-            let mut v = vec![0f32; out.len() / 4];
-            for (dst, src) in v.iter_mut().zip(out.chunks_exact(4)) {
-                *dst = f32::from_le_bytes(src.try_into().unwrap());
-            }
-            Ok(v)
+            read
         }
     }
 
@@ -299,27 +334,35 @@ impl VkContext {
                 .map_err(|e| format!("cmdbuf: {e:?}"))?
                 .first()
                 .ok_or("no cmdbuf")?;
-            let bi = vk::CommandBufferBeginInfo::default()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            self.device.begin_command_buffer(cb, &bi).map_err(|e| format!("begin: {e:?}"))?;
-            record(cb);
-            self.device.end_command_buffer(cb).map_err(|e| format!("end: {e:?}"))?;
-            let cbs = [cb];
-            let sub = vk::SubmitInfo::default().command_buffers(&cbs);
-            let fence = self
-                .device
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(|e| format!("fence: {e:?}"))?;
-            self.device
-                .queue_submit(self.queue, &[sub], fence)
-                .map_err(|e| format!("submit: {e:?}"))?;
-            self.device
-                .wait_for_fences(&[fence], true, u64::MAX)
-                .map_err(|e| format!("wait: {e:?}"))?;
-            self.device.destroy_fence(fence, None);
+            // F8 (BUG_HUNT): fence and command buffer must be released on every path.
+            let mut fence = None;
+            let r = (|| -> Result<(), String> {
+                let bi = vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+                self.device.begin_command_buffer(cb, &bi).map_err(|e| format!("begin: {e:?}"))?;
+                record(cb);
+                self.device.end_command_buffer(cb).map_err(|e| format!("end: {e:?}"))?;
+                let cbs = [cb];
+                let sub = vk::SubmitInfo::default().command_buffers(&cbs);
+                fence.replace(
+                    self.device
+                        .create_fence(&vk::FenceCreateInfo::default(), None)
+                        .map_err(|e| format!("fence: {e:?}"))?,
+                );
+                self.device
+                    .queue_submit(self.queue, &[sub], fence.unwrap())
+                    .map_err(|e| format!("submit: {e:?}"))?;
+                self.device
+                    .wait_for_fences(&[fence.unwrap()], true, u64::MAX)
+                    .map_err(|e| format!("wait: {e:?}"))?;
+                Ok(())
+            })();
+            if let Some(f) = fence {
+                self.device.destroy_fence(f, None);
+            }
             self.device.free_command_buffers(self.cmd_pool, &[cb]);
+            r
         }
-        Ok(())
     }
 
     pub fn device_interface(&self) -> &ash::Device {

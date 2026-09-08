@@ -242,6 +242,39 @@ list owns the ids.
   or llvmpipe debugging in Phase H; RDNA2 identity is exactly 100.0 (asserted).
 - Next: Phase H plan revision (optimization + llvmpipe anomaly) - awaits human.
 
+## 2026-09-08 — BUG_HUNT.md findings F1-F12 fixed (F7 no-op by design)
+
+- Done: All 12 findings from BUG_HUNT.md addressed; verified: full suite green (14 tests
+  incl. new determinism test), clippy --all-targets clean, device summary shows
+  validation=true fma_ieee=true on RDNA2.
+  F1 (H): maxComputeWorkGroupCount queried at context creation (max_groups_x());
+  run_compute_push splits flat group counts into 2D (gx=min(n,max), gy=ceil); all 7
+  indexed shaders reconstruct the flat id via gl_NumWorkGroups.x*gl_WorkGroupSize.x;
+  Err when even 2D exceeds limits (CLI falls back to CPU). AMD path unchanged (gy=1).
+  F2 (M): ci.yml installs vulkan-validationlayers; context prints
+  "vulkan: device=... validation=... fma_ieee=... max_groups_x=..." in debug builds
+  (visible in CI logs; was the silent-absence hole).
+  F3 (M): NaN-aware f64 comparators (e2e max_abs, maps max_abs_diff_f64) + range_audit
+  asserts !NaN.
+  F4 (M): tests/determinism.rs - runs xyb/blur twice on identical content, asserts
+  determinism on IEEE devices (passes locally), prints the first diverging kernel on
+  non-IEEE (localizes the llvmpipe anomaly on next CI run); stale "identity is
+  driver-independent" comment corrected in e2e_parity.
+  F5 (L): radius now roundf-exact ((expr as f32).round() as f64). F6 (L): cpu.rs clamp
+  -> v.max(0.0) matching ZeroIfNegative/shader. F8 (L): PassRes Drop-guard in
+  pipeline.rs; fence+cmdbuf cleanup in one_shot; staging cleanup on all paths in
+  create_buffer_f32/readback_f32; BufGuard in gpu_pipeline; error-path destroys in
+  blur_planes/xyb_convert/downsample/mul. F9 (L): rg_upload doc corrected.
+  F10/F11 (L): README gained the port section (build, CLI, --cpu, input domain incl.
+  16-bit/gray+alpha rejection + iCCP/gAMA/cHRM, dumps-before-tests requirement).
+  F12 (L): CI oracle job now also verifies big, s7 rejection, and the asymmetric-alpha
+  goldens. F7: no change - documented + already guarded by xyb_parity bit-exact assert.
+- Deviated from plan: none.
+- Blocked / open question: llvmpipe identity anomaly stays OPEN until the determinism
+  test runs on CI (needs push); F1's minimum-spec-driver path is untestable locally
+  (AMD reports u32::MAX groups) - logic reviewed + guarded.
+- Next: push to run CI with F2/F4/F12 changes (awaits authorization); then Phase H.
+
 ## 2026-09-08 — adversarial verification pass (2 bugs fixed, 3 corrections)
 
 - Done: Two parallel attacker passes over the finished M0-M9 work.
@@ -269,3 +302,26 @@ list owns the ids.
 - Deviated from plan: none new.
 - Blocked / open question: none.
 - Next: unchanged - Phase H plan revision + push authorization for CI, both await human.
+
+## 2026-09-08 — full-repo bug hunt (report: BUG_HUNT.md)
+
+- Done: Independent adversarial review of the whole port (all Rust sources, all
+  GLSL shaders vs cited C++ lines, tests, CI, oracle scripts). Baseline re-
+  observed: local suite 13/13 green. 12 findings written to BUG_HUNT.md. Headline:
+  F1 (H) dispatches exceed device limits and limits are never queried - the
+  committed big fixture already needs 65536/196608 workgroups in x vs the 65535
+  spec minimum (works on RADV, invalid on Intel/lavapipe-enforcing drivers);
+  F2 (M) CI never installs vulkan-validationlayers, so the "validation on" claim
+  is false there (confirmed: zero validation output in run #6 logs) - F1/F2 mask
+  each other; F3 (M) NaN-blind f64 comparators in e2e/maps parity tests;
+  F4 (M) llvmpipe identity anomaly reduced to cross-dispatch determinism of
+  xyb/mul/blur (localization experiment proposed); F5-F12 latent/doc/coverage
+  items (roundf-vs-round radius, -0.0 clamp in cpu.rs, neg-cbrt double-rounding,
+  buffer leaks on error paths, stale rg_upload comment, CLI input-domain gaps,
+  README missing the port, partial CI golden coverage).
+- Deviated from plan: correction to the run#5 entry - "identity is
+  driver-independent" is not true as stated (llvmpipe anomaly proves dependence
+  on cross-dispatch determinism); see BUG_HUNT.md F4.
+- Blocked / open question: F1/F2/F3 fixes await authorization (not requested to
+  fix in this pass - review only).
+- Next: human decision on fixing F1+F2 (limits query + CI package) before Phase H.

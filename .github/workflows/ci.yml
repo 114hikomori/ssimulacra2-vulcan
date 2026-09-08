@@ -29,13 +29,21 @@ jobs:
           cmake -S src -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=false
           ninja -C build ssimulacra2
       - name: Oracle scores match recorded goldens
+        # F12 (BUG_HUNT): full coverage - 10 pairs + identity + big + s7
+        # rejection + the asymmetric-alpha goldens that pin the dispatch fix.
         run: |
-          for p in photo grad noise step odd s8 s9 s12 s15 alpha gray; do
+          for p in photo grad noise step odd s8 s9 s12 s15 alpha gray big; do
             s=$(./build/ssimulacra2 tests/fixtures/${p}_orig.png tests/fixtures/${p}_dist.png)
             grep -q "^$p $s$" oracle/scores_prepatch.txt || { echo "DRIFT $p: $s"; exit 1; }
           done
           s=$(./build/ssimulacra2 tests/fixtures/photo_orig.png tests/fixtures/photo_orig.png)
           [ "$s" = "100.00000000" ] || { echo "identity drift: $s"; exit 1; }
+          ./build/ssimulacra2 tests/fixtures/s7_orig.png tests/fixtures/s7_dist.png 2>/dev/null \
+            && { echo "s7 must be rejected"; exit 1; }
+          while read -r a b want; do
+            got=$(./build/ssimulacra2 "tests/fixtures/${a}.png" "tests/fixtures/${b}.png")
+            [ "$got" = "$want" ] || { echo "asymmetric drift $a/$b: $got vs $want"; exit 1; }
+          done < oracle/scores_asymmetric.txt
       - uses: actions/upload-artifact@v4
         with:
           name: oracle
@@ -47,9 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install lavapipe + validation
+        # F2 (BUG_HUNT): vulkan-validationlayers ships the Khronos layer on
+        # Ubuntu 24.04; without it the "validation in dev builds" claim was
+        # silently inactive in CI.
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools vulkan-validationlayers
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

@@ -6,7 +6,15 @@ use ssimulacra2_vulkan::oracle_dump::Dump;
 use ssimulacra2_vulkan::score::{score, weighted_sum};
 
 fn max_abs(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f64, f64::max)
+    // F3 (BUG_HUNT): NaN-aware - f64::max would silently drop a NaN drift.
+    let mut worst = 0.0f64;
+    for (x, y) in a.iter().zip(b) {
+        let d = (x - y).abs();
+        if d.is_nan() || d > worst {
+            worst = d;
+        }
+    }
+    worst
 }
 
 fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
@@ -16,7 +24,9 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     // amplifies driver fma noise ~1100x through the division - score-level
     // assertions are meaningless there and are printed, not asserted).
     // Structural bugs still get caught on any device: norms 1e-3, weighted
-    // 1e-2, identity exact (driver-independent by symmetric computation).
+    // 5e-2. Identity exactness holds on IEEE-fma devices; on llvmpipe it is
+    // an OPEN ANOMALY (99.984, see CHECKPOINT 2026-09-08 run #5 and
+    // BUG_HUNT.md F4) - identity is NOT driver-independent as once claimed.
     let strict = ctx.fma_ieee();
     let (norm_bar, w_bar) = if strict { (1e-6, 1e-6) } else { (1e-3, 5e-2) };
     let p = |name: &str| -> Dump {

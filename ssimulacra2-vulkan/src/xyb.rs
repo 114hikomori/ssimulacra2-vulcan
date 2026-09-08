@@ -72,12 +72,15 @@ pub fn xyb_convert(
         n: n as u32,
         positive: positive as u32,
     };
-    ctx.run_compute_push(
+    if let Err(e) = ctx.run_compute_push(
         include_bytes!("../shaders/xyb_positive.spv"),
-        c"main",
+        crate::c_main(),
         &[linear, &out],
         ((n as u32) + 63) / 64,
         &bytes_of(&push),
-    )?;
+    ) {
+        ctx.destroy_buffer(out);
+        return Err(e);
+    }
     Ok(out)
 }

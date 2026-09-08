@@ -38,7 +38,7 @@ float cbrt_and_add(float x, float add) {
 }
 
 void main() {
-  uint i = gl_GlobalInvocationID.x;
+  uint i = gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
   if (i >= n) { return; }
   uint plane = n;  // stride between planes
   float r = lin[i];

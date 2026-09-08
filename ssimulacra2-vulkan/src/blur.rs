@@ -18,7 +18,10 @@ pub struct RgConst {
 /// Derivation in f64 exactly as CreateRecursiveGaussian does, then cast to f32.
 pub fn create_recursive_gaussian(sigma: f64) -> RgConst {
     const PI: f64 = 3.141592653589793238;
-    let radius_f = (3.2795 * sigma + 0.2546).round(); // (57)
+    // F5 (BUG_HUNT): the oracle uses roundf() - float rounding of the double
+    // expression (gauss_blur.cc:504). Transcribe exactly (identical at
+    // sigma=1.5, but pinned for any future sigma).
+    let radius_f = ((3.2795 * sigma + 0.2546) as f32).round() as f64; // (57)
     let radius = radius_f as usize;
     let pd2r = PI / (2.0 * radius_f);
     let omega = [pd2r, 3.0 * pd2r, 5.0 * pd2r];
@@ -119,9 +122,10 @@ fn inv3x3(m: &mut [f64; 9]) {
     }
 }
 
-/// Upload layout (f32 words): [0..48) = n2,d1,mul_prev,mul_prev2,mul_in (each
-/// 3 sections x 4 lanes, broadcast x4 like the oracle struct); [48] = radius
-/// (as f32 bits via from_bits path below); rest padding to 64.
+/// Upload layout (64 f32 words, matching the oracle's dumped struct):
+/// [0..12) n2, [12..24) d1, [24..36) mul_prev, [36..48) mul_prev2,
+/// [48..60) mul_in - each 3 sections broadcast x4 (index 4*k+lane); [60..64)
+/// padding. The radius travels in push constants, not this buffer.
 pub fn rg_upload(rg: &RgConst) -> Vec<f32> {
     let mut v = vec![0f32; 64];
     for k in 0..3 {
@@ -159,22 +163,26 @@ pub fn blur_planes(
     let out = ctx.create_empty(n)?;
     let push = push_bytes(rg, w as u32, h as u32);
     let entry = c"main";
-    ctx.run_compute_push(
-        include_bytes!("../shaders/blur_h.spv"),
-        entry,
-        &[input, &temp, &rgbuf],
-        ((3 * h) as u32 + 63) / 64,
-        &push,
-    )?;
-    ctx.run_compute_push(
-        include_bytes!("../shaders/blur_v.spv"),
-        entry,
-        &[&temp, &out, &rgbuf],
-        ((3 * w) as u32 + 63) / 64,
-        &push,
-    )?;
-    ctx.destroy_buffer(temp);
+    let r = ctx
+        .run_compute_push(
+            include_bytes!("../shaders/blur_h.spv"),
+            entry,
+            &[input, &temp, &rgbuf],
+            ((3 * h) as u32).div_ceil(64),
+            &push,
+        )
+        .and_then(|()| {
+            ctx.run_compute_push(
+                include_bytes!("../shaders/blur_v.spv"),
+                entry,
+                &[&temp, &out, &rgbuf],
+                ((3 * w) as u32).div_ceil(64),
+                &push,
+            )
+        });
     ctx.destroy_buffer(rgbuf);
+    ctx.destroy_buffer(temp);
+    r?;
     Ok(out)
 }
 

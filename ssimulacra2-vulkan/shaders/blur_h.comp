@@ -35,7 +35,7 @@ void step0(int n, int N, uint base, out float o[3], inout float y1[3], inout flo
 }
 
 void main() {
-  uint r = gl_GlobalInvocationID.x;
+  uint r = gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
   if (r >= 3u * h) { return; }
   uint c = r / h;
   uint row = r % h;

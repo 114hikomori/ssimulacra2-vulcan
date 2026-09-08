@@ -189,9 +189,9 @@ pub fn xyb_planes_cpu(lin: &[f32], w: usize, h: usize, positive: bool) -> Vec<f3
         let mut mixed = [0f32; 3];
         for c in 0..3 {
             let mut v = m[3 * c].mul_add(r, m[3 * c + 1].mul_add(g, m[3 * c + 2].mul_add(b, bias[c])));
-            if v < 0.0 {
-                v = 0.0;
-            }
+            // F6 (BUG_HUNT): max(0.0) matches the oracle's ZeroIfNegative
+            // (sign-bit test) and the shader's max() - maps -0.0 to +0.0.
+            v = v.max(0.0);
             mixed[c] = cbrt_and_add(v, nc[c]);
         }
         let mut x = 0.5 * (mixed[0] - mixed[1]);
