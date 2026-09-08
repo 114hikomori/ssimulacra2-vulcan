@@ -597,3 +597,34 @@ list owns the ids.
   ready: re-baseline M9 (2.3x predates #14-#20), top lever = pipeline/
   descriptor caching per launch-bound finding, then tiled blur / fused mul /
   f32-division-emulation options ranked by fresh profile.
+
+## 2026-09-08 — Phase H revision approved + H0 DONE (measured profile; two surprises)
+
+- Done: Human reviewed the plan (7 points) and authorized execution. Plan
+  revised: point 1 (host-prep vs dispatch-overhead are TWO chunks; stage list
+  extended to full-process with residual gate), point 2 (H4 drift-budget
+  exception deleted - bit-exact or fail), point 3 (H3-style gates everywhere +
+  M10 re-check after every step), point 4 (oracle re-measured same-session),
+  point 5 (photo pass/fail semantics pinned), point 6 (submit-fusion gated by
+  5x suite repeats + validate_sync), point 7 (real VkPipelineCache).
+  H0 executed: --profile flag (Profile::time pass-through when off; suite
+  18/18 + clippy clean; CLI score byte-identical with and without flag).
+  big 2048^2 wall 1870 ms residual 4.5%: readback 742 > prep 408 > blur 235 >
+  context-init 170 > rest ~215. Causes located in code (staging alloc+copy
+  inflation; per-element rational srgb_to_linear over 25.2M 8-bit-quantized
+  values). Lever order set by data: H1 readback, H2 caching+submit, H3 prep
+  LUT, H4/H5 gated on re-profile.
+  SURPRISE 1: M9's oracle 0.82 s NOT reproducible - fresh same-session oracle
+  big min-run ~1.13 s (scores verified correct, golden photo matches; the
+  earlier 0.021 s measurement was build/ssimulacra2.exe dying with
+  0xC0000135 DLL_NOT_FOUND when C:\msys64\ucrt64\bin is not on PATH - oracle
+  runs from now on must set PATH, as the M9 bash wrapper did).
+  SURPRISE 2: this host's wall time swings up to 1.6x between batches under
+  load (all-core oracle runs heat-share with GPU); protocol switched to
+  per-impl batched MIN-of-5 same-session. Photo residual 9.8% = pre-main
+  process start (~35-90 ms measured via usage-exit floor), documented not
+  hidden.
+- Deviated from plan: none (revision IS the plan update, approved).
+- Blocked / open question: none.
+- Next: H1 (readback fix: persistent staging + single memcpy + fused sd+ed).
+  Pushes of e72516d/3922ed3/H0 commits await authorization.

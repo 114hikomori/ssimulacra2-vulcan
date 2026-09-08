@@ -18,6 +18,7 @@ pub mod gpu_pipeline;
 pub mod maps;
 pub mod oracle_dump;
 pub mod pipeline;
+pub mod profile;
 pub mod score;
 pub mod xyb;
 

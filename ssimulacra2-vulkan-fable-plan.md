@@ -324,11 +324,86 @@ harness skeleton.
 **Exit observation:** CI green on lavapipe; local real-GPU run green; fallback exercised by
 device-forcing test.
 
-### Phase H — Performance (separate plan revision)  → M9, M10
-Profile per stage (expect host-side prep + readback to dominate — research §5 inference,
-must be measured, not assumed); only then consider: RGBA-packed planes, fused submits,
-shared-memory blur tiles, GPU reductions with deterministic order, precomputed-reference
-caching (fast-ssim2 insight). No optimization before M6 parity is observed.
+### Phase H — Performance (plan revision approved by human 2026-09-08)  → M9 done, M10 open
+M9 delivered (per-process timings, big GPU ~2.3x slower than oracle) and two post-M9
+findings shape this revision: (a) removing the 4 f64 muls/pixel from maps_combine changed
+wall time NOT AT ALL (launch/sync-bound, CI #20 confirmed correctness) — arithmetic is
+not the bottleneck at current overhead; (b) research §5's dssim-vulkan claim ("host-side
+data prep dominates ~70-90 ms at 2048^2, GPU ~5%") is a HYPOTHESIS about another codebase
+(AGENTS §0) and our pre-pipeline path (VkContext init with validation, png decode x2,
+clone/blend, to_linear x2 ~100MB, upload ~100MB) was NOT in the original stage list —
+H0 must therefore cover 100% of process wall time, with a residual line; a large residual
+is itself the finding.
+
+- **H0 DONE (2026-09-08): measured profile of big 2048^2 (quiet batch, wall 1870 ms,
+  residual 4.5%):** readback 742 (39.7%) > prep 408 (21.8%) > blur 235 (12.6%) >
+  context-init 170 (9.1%) > decode 57 > upload 50 > norms 39 > mul 37 > xyb 24 >
+  downsample 18 > maps 7. GPU arithmetic itself ~320 ms; ~45% of wall is HOST/SYNC
+  (the research §5 "host prep" story confirmed as ours, and bigger than assumed).
+  Causes located: readback = fresh HOST_COHERENT ~100 MB staging + Vec<u8> copy +
+  zero-init Vec<f32> + byte-loop per call (12 calls), 3-4x inflated; prep =
+  srgb_to_linear degree-4 rational (~8 mul_add + true div) per element over 25.2 M
+  elements - yet 8-bit PNG inputs are only k/255, so a 256-entry table computed by
+  the SAME function is bit-identical by construction. Measurement-protocol finding:
+  laptop wall times swing up to 1.6x between batches (thermal/all-core oracle
+  interleaving) - M10 gate = MIN of >=5 runs per impl, same session, plus
+  M9's 0.82 s oracle number NOT reproducible this session (measured 1.13-1.46 s);
+  M10 compares against the FRESH same-session oracle measurement, not the old one.
+- **Lever ranking per data (reorders H1-H5; M10 re-checked after each):**
+  H1 = readback fix: persistent grow-only staging buffer, one memcpy (no Vec<u8>
+  +no zero-init+no byte loop), sd+ed fused into one buffer/scale (12 syncs -> 6);
+  purely host-side, bit-exact by construction.
+  H2 = pipeline/descriptor/shader-module cache + real VkPipelineCache (persisted)
+  + one submit+fence per scale with explicit compute->compute barriers; gated per
+  point 6 (>=5 suite repeats, validate_sync on, CI green, revert-on-red).
+  H3 = prep: 8-bit LUT path for alpha-free images (table values computed by
+  srgb_to_linear itself -> bit-identical; blended-float alpha path keeps the
+  per-element function), plus avoid the redundant srgb.clone() copies if free.
+  H4/H5 = blur tiles, mul fusion, f64-div emulation - ONLY if post-H1-H3 re-profile
+  still ranks them; GPU-side floor (~320 ms) may make them moot for M10.
+- **H1 detail (readback, target ~600 ms):** grow-only persistent HOST staging buffer
+  (one alloc reused, never destroyed per call); replace the Vec<u8> copy + zero-init
+  Vec<f32> + elementwise from_le_bytes loop with ONE copy_to_vec of aligned f32 words;
+  maps_combine writes sd+ed into one 6*n buffer -> 6 readbacks/syncs instead of 12.
+  Values are byte-identical copies of the same device buffers - bit-exactness is
+  structural; gate = suite + timing. GPU-side norms stay a non-goal (data would have
+  to scream first; readback fix does not require them).
+- **H2 detail (dispatch overhead, target ~350 ms):** per-(spv,bindings,push) cache of
+  shader-module/dsl/layout/pipeline + persistent descriptor pool + REAL VkPipelineCache
+  (not NULL; persisted to disk - human point 7) and one submit + one fence per scale.
+  H2.1 (caching) is pure host plumbing, values cannot change; suite + timing gate.
+  H2.2 (fused submit) removes the implicit per-dispatch fence ordering: explicit
+  compute->compute vkCmdPipelineBarrier between every dependent dispatch; barrier bugs
+  can be RACES, not deterministic wrong values (human point 6), so the H2.2 commit is
+  gated by (i) correctness suite run >=5 times locally, (ii) Vulkan synchronization
+  validation enabled for those runs (VK_LAYER_SETTING=khronos_validation.validate_sync),
+  (iii) CI green, (iv) timing. Revert-on-red; highest-risk commit of the phase.
+- **H3 detail (prep LUT, target ~350 ms):** 8-bit PNG alpha-free fast path:
+  decode records the bit-depth/normalization fact; to_linear indexes a
+  table[k] = srgb_to_linear(k/255.0) built once with the SAME function -> table output
+  bits are identical to the per-element path by construction (assert table vs
+  per-element over all 256 values in a unit test); alpha/blend path (arbitrary floats)
+  keeps the current function untouched. Remove srgb.clone() by fusing blend where free.
+- **H4 detail (blur tiles):** shared-memory/segmented IIR - ONLY if post-H1..H3
+  re-profile still ranks blur material. Recursive IIR order is reassociation-sensitive:
+  H4 must preserve BIT-EXACT output or it FAILS and is recorded as such (no
+  drift-budget exception — the top rule stands unconditional — human point 2).
+- **H5 detail (rest):** mul-fusion into neighbours, f64-division emulation in
+  maps_combine — ONLY if the post-H1..H3 profile still ranks them material
+  (currently expected: no; same "measure, don't assume" that killed the f64 theory).
+- **After EVERY H-step: re-check M10** (big vs oracle, same-session per-impl batches,
+  MIN of >=5 runs each — the H0 protocol finding, not median-of-interleaved).
+  If already met, remaining H-steps are skipped, not "polished"
+  (human point 3). Non-goal list (f16, multi-GPU, GPU decode/ICC/GPU norms) unchanged.
+- **M10 definition (photo semantics fixed now — human point 5):** PASS = big GPU beats
+  big oracle in the final same-session table AND photo GPU is not worse than photo
+  oracle by more than 10%; a photo loss beyond 10% is an unresolved gap reported for
+  human decision — never silently accepted because big won. All correctness gates
+  (RDNA2 bit-exact dumps, all-device identity asserts, llvmpipe sanity bars) must be
+  green on both devices; no tolerance may move.
+Original levers still apply: RGBA-packed planes and precomputed-reference/fast-ssim2
+caching remain candidates after profiling, behind the same gates. No optimization
+before M6 parity — already satisfied.
 
 ---
 

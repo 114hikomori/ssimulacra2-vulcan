@@ -77,12 +77,26 @@ pub fn compute_ssimulacra2_gpu(
     w: usize,
     h: usize,
 ) -> Result<Vec<ScaleNorms>, String> {
+    compute_ssimulacra2_gpu_profiled(ctx, lin1, lin2, w, h, &mut crate::profile::Profile::default())
+}
+
+/// H0-instrumented variant: every stage whose wall time we needed to see in the
+/// 2026-09-08 Phase H profile runs inside `prof.time`; a disabled Profile makes
+/// that a pass-through, so the two entry points compute identically.
+pub fn compute_ssimulacra2_gpu_profiled(
+    ctx: &VkContext,
+    lin1: &[f32],
+    lin2: &[f32],
+    w: usize,
+    h: usize,
+    prof: &mut crate::profile::Profile,
+) -> Result<Vec<ScaleNorms>, String> {
     assert_eq!(lin1.len(), 3 * w * h);
     assert_eq!(lin2.len(), 3 * w * h);
     let rg: RgConst = create_recursive_gaussian(1.5);
     let mut g = BufGuard { ctx, bufs: vec![] };
-    let mut l1 = g.keep(ctx.create_buffer_f32(lin1))?;
-    let mut l2 = g.keep(ctx.create_buffer_f32(lin2))?;
+    let mut l1 = g.keep(prof.time("upload", || ctx.create_buffer_f32(lin1)))?;
+    let mut l2 = g.keep(prof.time("upload", || ctx.create_buffer_f32(lin2)))?;
     let (mut cw, mut ch) = (w, h);
     let mut scales = Vec::new();
     for scale in 0..K_NUM_SCALES {
@@ -90,40 +104,45 @@ pub fn compute_ssimulacra2_gpu(
             break;
         }
         if scale > 0 {
-            let d1 = g.keep(downsample(ctx, &l1, cw, ch))?;
-            let d2 = g.keep(downsample(ctx, &l2, cw, ch))?;
+            let d1 = g.keep(prof.time("downsample", || downsample(ctx, &l1, cw, ch)))?;
+            let d2 = g.keep(prof.time("downsample", || downsample(ctx, &l2, cw, ch)))?;
             cw = (cw + 1) / 2;
             ch = (ch + 1) / 2;
             l1 = d1;
             l2 = d2;
         }
         let n = cw * ch;
-        let x1 = g.keep(xyb_convert(ctx, &l1, n, true))?;
-        let x2 = g.keep(xyb_convert(ctx, &l2, n, true))?;
-        let m11 = g.keep(mul(ctx, &x1, &x1, 3 * n))?;
-        let m22 = g.keep(mul(ctx, &x2, &x2, 3 * n))?;
-        let m12 = g.keep(mul(ctx, &x1, &x2, 3 * n))?;
-        let s11 = g.keep(blur_planes(ctx, &m11, cw, ch, &rg))?;
-        let s22 = g.keep(blur_planes(ctx, &m22, cw, ch, &rg))?;
-        let s12 = g.keep(blur_planes(ctx, &m12, cw, ch, &rg))?;
-        let mu1 = g.keep(blur_planes(ctx, &x1, cw, ch, &rg))?;
-        let mu2 = g.keep(blur_planes(ctx, &x2, cw, ch, &rg))?;
+        let x1 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l1, n, true)))?;
+        let x2 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l2, n, true)))?;
+        let m11 = g.keep(prof.time("mul", || mul(ctx, &x1, &x1, 3 * n)))?;
+        let m22 = g.keep(prof.time("mul", || mul(ctx, &x2, &x2, 3 * n)))?;
+        let m12 = g.keep(prof.time("mul", || mul(ctx, &x1, &x2, 3 * n)))?;
+        let s11 = g.keep(prof.time("blur", || blur_planes(ctx, &m11, cw, ch, &rg)))?;
+        let s22 = g.keep(prof.time("blur", || blur_planes(ctx, &m22, cw, ch, &rg)))?;
+        let s12 = g.keep(prof.time("blur", || blur_planes(ctx, &m12, cw, ch, &rg)))?;
+        let mu1 = g.keep(prof.time("blur", || blur_planes(ctx, &x1, cw, ch, &rg)))?;
+        let mu2 = g.keep(prof.time("blur", || blur_planes(ctx, &x2, cw, ch, &rg)))?;
         let sd = g.keep(ctx.create_empty(3 * n))?;
         let ed = g.keep(ctx.create_empty(3 * n))?;
-        ctx.run_compute_push(
-            include_bytes!("../shaders/maps_combine.spv"),
-            crate::c_main(),
-            &[&x1, &x2, &mu1, &mu2, &s11, &s22, &s12, &sd, &ed],
-            ((3 * n) as u32).div_ceil(64),
-            &(n as u32).to_le_bytes(),
-        )?;
-        let sd_r = ctx.readback_f32(&sd)?;
-        let ed_r = ctx.readback_f32(&ed)?;
-        let sdv: Vec<&[f32]> = (0..3).map(|c| &sd_r[c * n..(c + 1) * n]).collect();
-        let edv: Vec<&[f32]> = (0..3).map(|c| &ed_r[c * n..(c + 1) * n]).collect();
-        let mut sn = ScaleNorms::default();
-        sn.avg_ssim.copy_from_slice(&ssim_norms(&sdv, cw, ch));
-        sn.avg_edgediff.copy_from_slice(&edge_norms(&edv, cw, ch));
+        prof.time("maps", || {
+            ctx.run_compute_push(
+                include_bytes!("../shaders/maps_combine.spv"),
+                crate::c_main(),
+                &[&x1, &x2, &mu1, &mu2, &s11, &s22, &s12, &sd, &ed],
+                ((3 * n) as u32).div_ceil(64),
+                &(n as u32).to_le_bytes(),
+            )
+        })?;
+        let sd_r = prof.time("readback", || ctx.readback_f32(&sd))?;
+        let ed_r = prof.time("readback", || ctx.readback_f32(&ed))?;
+        let sn = prof.time("norms", || {
+            let sdv: Vec<&[f32]> = (0..3).map(|c| &sd_r[c * n..(c + 1) * n]).collect();
+            let edv: Vec<&[f32]> = (0..3).map(|c| &ed_r[c * n..(c + 1) * n]).collect();
+            let mut sn = ScaleNorms::default();
+            sn.avg_ssim.copy_from_slice(&ssim_norms(&sdv, cw, ch));
+            sn.avg_edgediff.copy_from_slice(&edge_norms(&edv, cw, ch));
+            sn
+        });
         scales.push(sn);
     }
     Ok(scales)
