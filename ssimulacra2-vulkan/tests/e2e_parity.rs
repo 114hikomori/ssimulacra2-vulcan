@@ -55,11 +55,14 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     // Identity exactness: asserted on EVERY device since the F4 fix (run #17
     // closed the llvmpipe anomaly: 20718/36864 nonzero d -> 0, 99.984 ->
     // exactly 100.0). History in CHECKPOINT 2026-09-08 and BUG_HUNT.md F4.
+    // Identity is bit-exact vs the oracle 100.0, so it must NOT fall into the
+    // non-IEEE "score assert skipped" branch below (that message is only true
+    // for the real-photometric fixtures whose ulp drift is fma-driven).
     if expect_exact_100 {
         assert_eq!(got, 100.0, "identity must be exactly 100");
         assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
-    }
-    if strict {
+        assert_eq!(got, want, "identity score must be bit-exact vs oracle");
+    } else if strict {
         assert!((got - want).abs() <= 1e-5, "{fixture} score drift");
         assert!(wd <= w_bar, "{fixture} weighted drift {wd:e}");
     } else {

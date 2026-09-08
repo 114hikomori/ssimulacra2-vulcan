@@ -519,3 +519,23 @@ list owns the ids.
 - Next: push this tightening commit (awaits authorization) to confirm the
   all-device identity gates go green on llvmpipe; then F4 fully done, only
   Phase H (M10 optimization, deferred) remains.
+
+## 2026-09-08 — CI run #18 GREEN (all-device identity gates confirmed); fixed a misleading NOTE
+
+- Done: Pushed cf612ad (AUTH: human "push"). Run #18 completed/success on
+  llvmpipe: F4 probe A-E all 0/12288, identity ssim_d 0/36864, identical
+  score 100.00000000 (drift 0e0), other-fixture skip-notes still present
+  (legit device policy, 13 of them), 0 failures, clippy clean. F4 is now
+  closed with gates asserting on every driver.
+  Post-green self-review caught a cosmetic contradiction: the identity
+  fixture still printed "NOTE: identical score assert skipped (non-IEEE)"
+  even though it is now asserted bit-exact - because expect_exact_100 fell
+  through to the same if/else as photometric fixtures. Fixed in
+  e2e_parity.rs: identity -> own branch (assert_eq got==100, wd==0, and now
+  got==want bit-exact vs oracle; strengthened from <=1e-5, verified locally
+  the dump want is exactly 100.0), so the "skipped" NOTE no longer fires for
+  identity. RDNA2 re-run: 18/18, clippy -D warnings clean.
+- Deviated from plan: none.
+- Blocked / open question: none.
+- Next: push this NOTE fix (awaits authorization) for one more green CI, then
+  F4 fully closed and only Phase H (M10) remains (deferred per human).
