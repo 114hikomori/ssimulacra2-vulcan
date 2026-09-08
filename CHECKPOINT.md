@@ -191,3 +191,26 @@ list owns the ids.
 - Next: M9 quick performance profile (GPU vs CPU vs C++ oracle, representative sizes, per-
   stage timing) -> record; M10 (optimized path beats CPU) is Phase H per plan and needs its
   own plan revision - hand back after M9 with data.
+
+## 2026-09-08 — M9 ✅ (performance profile recorded; M10 = Phase H, needs plan revision)
+
+- Done: End-to-end per-process timings, release builds, this host (RX 6600M), median of 3:
+  | impl | photo 128x96 | big 2048^2 |
+  |---|---|---|
+  | C++ oracle (AVX2, single-thread) | 0.11 s | 0.82 s |
+  | Rust CPU path | 0.033 s | 4.93 s |
+  | Rust GPU path | 0.369 s | 1.904 s |
+  Observations for Phase H: GPU big is 2.3x SLOWER than the C++ oracle - expected for the
+  deliberately-unoptimized correctness build: pipeline+descriptor built per dispatch (~100
+  per image), separate mul kernel, 6-map f32 readback per scale (~24 B/px at scale 0),
+  f64 division (1/16 rate on RDNA2), blur = 1 thread per row/column (6144 threads on
+  2048^2 - low occupancy). GPU photo is fixed-overhead dominated (context init + pipeline
+  builds). Rust CPU beats C++ on tiny images (fast png decode) but is scalar and loses 6x
+  at 2048^2. Optimization order per plan §11 applies; biggest expected wins: pipeline/descriptor
+  caching, fused multiply-into-blur, shared-memory tiled blur, single submit per scale,
+  correctly-rounded f32 division emulation replacing f64, GPU-side norms with deterministic
+  order (needs its own parity bar).
+- Deviated from plan: none new.
+- Blocked / open question: M10 ("optimized path beats measured CPU baseline") is explicitly
+  Phase H = "separate plan revision" in the approved plan; not attempted under this run.
+- Next: Phase H plan revision (optimization) + first push to enable CI (both await human).
