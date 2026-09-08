@@ -45,12 +45,14 @@ void main() {
   precise float dmsq = dm * dm;
   precise float num_m = 1.0 - dmsq;
   // delta + delta + kC2 is bit-identical to the oracle's 2*(s12-mu12)+kC2 on
-  // IEEE devices (doubling is exact, so fl(2d+kC2) is the same value under
-  // any contraction choice) AND is the same expression tree as denom_s for
-  // identical inputs - which keeps num_s == denom_s (hence d == 0 exactly for
-  // identity) even on devices with non-IEEE fma like llvmpipe, where a
-  // contracted 2*delta+kC2 diverged from the pure-addition denom_s and broke
-  // the identity invariant (BUG_HUNT F4 root cause, CI run #8).
+  // IEEE devices (doubling is exact, so fl(2d+kC2) is the same value under any
+  // contraction choice). Kept as a value-neutral robustness change: it makes
+  // num_s the same expression tree as denom_s for identical inputs, which
+  // SHOULD force d == 0 for identity on any device - but CI run #9 disproved
+  // the contraction hypothesis (llvmpipe drift bit-identical to run #8), and
+  // run #11 showed d = 2^-24 persists there even with every upstream buffer
+  // bit-equal. F4 root cause is still OPEN, inside llvmpipe's evaluation of
+  // this kernel; this expression is not the fix it was once claimed to be.
   float delta = s12[b] - mu12;
   float num_s = delta + delta + kC2;
   float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;

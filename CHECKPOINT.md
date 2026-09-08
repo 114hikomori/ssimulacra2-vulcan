@@ -215,6 +215,57 @@ list owns the ids.
   Phase H = "separate plan revision" in the approved plan; not attempted under this run.
 - Next: Phase H plan revision (optimization) + first push to enable CI (both await human).
 
+## 2026-09-08 — adversarial verification pass (2 bugs fixed, 3 corrections)
+
+- Done: Two parallel attacker passes over the finished M0-M9 work.
+  BUG 1 (real, fixed): CLI alpha dispatch used worst-of-bg when EITHER image
+  had alpha; the oracle dual-passes only when the ORIGINAL does
+  (ssimulacra2_main.cc:105). Asymmetric input gray_orig vs alpha_dist diverged
+  by 10.918. Fixed main.rs; regression test cli_asymmetric_alpha_dispatch with
+  oracle-recorded goldens (oracle/scores_asymmetric.txt: -53.27997245,
+  -108.32956807) for both gpu and cpu modes. 16 other adversarial cases
+  (swapped pairs, cross pairs incl. negative scores, determinism x3, missing
+  file) all passed <=1.3e-7.
+  BUG 2 (test hygiene, fixed): cpu_form.rs printed drift but asserted nothing
+  (vacuous test cited as evidence). Now asserts bit-exact (d == 0.0) vs dumps.
+  e2e identity case additionally asserts weighted drift == 0.0 exactly.
+  CI (fixed before first run): gen_goldens.sh / run_scores.sh hardcoded
+  .exe (would fail on Linux CI); now probe "$EXE.exe" then bare. clippy step
+  gained --all-targets.
+  CORRECTIONS to earlier entries (append-only, so corrected here): M6 entry's
+  "weighted <=3.9e-9" was the s8 value; true max over the 13 runs is 4.18e-9
+  (s15) - still <=1e-6 bar. "identity weighted EXACTLY 0" was printed-only at
+  the time; now asserted. M3's blur_parity 2e-6 bar intentionally kept as the
+  M3 exit artifact; the stronger bit-exactness lives in maps_parity.
+  Verified after fixes: full suite green (13 tests incl. new regression),
+  clippy --all-targets zero warnings.
+- Deviated from plan: none new.
+- Blocked / open question: none.
+- Next: unchanged - Phase H plan revision + push authorization for CI, both await human.
+
+## 2026-09-08 — full-repo bug hunt (report: BUG_HUNT.md)
+
+- Done: Independent adversarial review of the whole port (all Rust sources, all
+  GLSL shaders vs cited C++ lines, tests, CI, oracle scripts). Baseline re-
+  observed: local suite 13/13 green. 12 findings written to BUG_HUNT.md. Headline:
+  F1 (H) dispatches exceed device limits and limits are never queried - the
+  committed big fixture already needs 65536/196608 workgroups in x vs the 65535
+  spec minimum (works on RADV, invalid on Intel/lavapipe-enforcing drivers);
+  F2 (M) CI never installs vulkan-validationlayers, so the "validation on" claim
+  is false there (confirmed: zero validation output in run #6 logs) - F1/F2 mask
+  each other; F3 (M) NaN-blind f64 comparators in e2e/maps parity tests;
+  F4 (M) llvmpipe identity anomaly reduced to cross-dispatch determinism of
+  xyb/mul/blur (localization experiment proposed); F5-F12 latent/doc/coverage
+  items (roundf-vs-round radius, -0.0 clamp in cpu.rs, neg-cbrt double-rounding,
+  buffer leaks on error paths, stale rg_upload comment, CLI input-domain gaps,
+  README missing the port, partial CI golden coverage).
+- Deviated from plan: correction to the run#5 entry - "identity is
+  driver-independent" is not true as stated (llvmpipe anomaly proves dependence
+  on cross-dispatch determinism); see BUG_HUNT.md F4.
+- Blocked / open question: F1/F2/F3 fixes await authorization (not requested to
+  fix in this pass - review only).
+- Next: human decision on fixing F1+F2 (limits query + CI package) before Phase H.
+
 ## 2026-09-08 — push authorized + CI runs #1-#6 -> GREEN (fma-fingerprint device gating)
 
 - AUTH: user said "push" (verbatim, this session) - pushed 81feacf..a8eb0a5 (11 commits),
@@ -296,53 +347,26 @@ list owns the ids.
 - Next: human decision on (a) Phase H plan revision (optimization + llvmpipe probe),
   (b) any further pushes.
 
-## 2026-09-08 — adversarial verification pass (2 bugs fixed, 3 corrections)
 
-- Done: Two parallel attacker passes over the finished M0-M9 work.
-  BUG 1 (real, fixed): CLI alpha dispatch used worst-of-bg when EITHER image
-  had alpha; the oracle dual-passes only when the ORIGINAL does
-  (ssimulacra2_main.cc:105). Asymmetric input gray_orig vs alpha_dist diverged
-  by 10.918. Fixed main.rs; regression test cli_asymmetric_alpha_dispatch with
-  oracle-recorded goldens (oracle/scores_asymmetric.txt: -53.27997245,
-  -108.32956807) for both gpu and cpu modes. 16 other adversarial cases
-  (swapped pairs, cross pairs incl. negative scores, determinism x3, missing
-  file) all passed <=1.3e-7.
-  BUG 2 (test hygiene, fixed): cpu_form.rs printed drift but asserted nothing
-  (vacuous test cited as evidence). Now asserts bit-exact (d == 0.0) vs dumps.
-  e2e identity case additionally asserts weighted drift == 0.0 exactly.
-  CI (fixed before first run): gen_goldens.sh / run_scores.sh hardcoded
-  .exe (would fail on Linux CI); now probe "$EXE.exe" then bare. clippy step
-  gained --all-targets.
-  CORRECTIONS to earlier entries (append-only, so corrected here): M6 entry's
-  "weighted <=3.9e-9" was the s8 value; true max over the 13 runs is 4.18e-9
-  (s15) - still <=1e-6 bar. "identity weighted EXACTLY 0" was printed-only at
-  the time; now asserted. M3's blur_parity 2e-6 bar intentionally kept as the
-  M3 exit artifact; the stronger bit-exactness lives in maps_parity.
-  Verified after fixes: full suite green (13 tests incl. new regression),
-  clippy --all-targets zero warnings.
-- Deviated from plan: none new.
-- Blocked / open question: none.
-- Next: unchanged - Phase H plan revision + push authorization for CI, both await human.
+## 2026-09-08 — fable-judge verdict (VERIFIED WITH CAVEATS) -> all 3 findings fixed
 
-## 2026-09-08 — full-repo bug hunt (report: BUG_HUNT.md)
-
-- Done: Independent adversarial review of the whole port (all Rust sources, all
-  GLSL shaders vs cited C++ lines, tests, CI, oracle scripts). Baseline re-
-  observed: local suite 13/13 green. 12 findings written to BUG_HUNT.md. Headline:
-  F1 (H) dispatches exceed device limits and limits are never queried - the
-  committed big fixture already needs 65536/196608 workgroups in x vs the 65535
-  spec minimum (works on RADV, invalid on Intel/lavapipe-enforcing drivers);
-  F2 (M) CI never installs vulkan-validationlayers, so the "validation on" claim
-  is false there (confirmed: zero validation output in run #6 logs) - F1/F2 mask
-  each other; F3 (M) NaN-blind f64 comparators in e2e/maps parity tests;
-  F4 (M) llvmpipe identity anomaly reduced to cross-dispatch determinism of
-  xyb/mul/blur (localization experiment proposed); F5-F12 latent/doc/coverage
-  items (roundf-vs-round radius, -0.0 clamp in cpu.rs, neg-cbrt double-rounding,
-  buffer leaks on error paths, stale rg_upload comment, CLI input-domain gaps,
-  README missing the port, partial CI golden coverage).
-- Deviated from plan: correction to the run#5 entry - "identity is
-  driver-independent" is not true as stated (llvmpipe anomaly proves dependence
-  on cross-dispatch determinism); see BUG_HUNT.md F4.
-- Blocked / open question: F1/F2/F3 fixes await authorization (not requested to
-  fix in this pass - review only).
-- Next: human decision on fixing F1+F2 (limits query + CI package) before Phase H.
+- Done: Judge confirmed all claims against diff + local re-run + real CI logs, no fraud.
+  Its three findings fixed: (1) maps_combine.comp comment still claimed the num_s
+  expression was the "F4 root cause" after run #9 disproved it - rewritten to state the
+  change is value-neutral robustness and F4 remains OPEN inside llvmpipe's kernel
+  evaluation. (2) AUTH quotes for the five CI-cycle pushes were not recorded at push
+  time (process gap, user confirmed authorization): the human's own words were "push"
+  (first, authorizing 81feacf..a8eb0a5 plus the CI-fix cycle dece0e1, 94c47ca, 4341ba3,
+  2ee38df, 2c8e414) and "push" again (authorizing 3cfa739, 60c219f, 0d6969c). (3) The
+  2D dispatch path (gy>1) had no strict gate: added split_groups pure unit tests
+  (gy=4 at llvmpipe's 65535 for the 196608-group case, minimality + edge cases) and
+  dispatch_2d.rs integration test - mul_planes at 2048^2 (OpFMul only, IEEE-mandated,
+  no fma) asserted BIT-EXACT vs host product on every driver; on CI's llvmpipe this
+  exercises the real gy=4 path strictly.
+  Also per judge notes: checkpoint entry order repaired (two entries had been inserted
+  mid-file; content untouched, now chronological) and test count corrected - suite is
+  16 tests now (15 + dispatch_2d's 2 = 17? no: 15 before this entry + 2 new = 17 total
+  test fns; earlier entries' "13/14 tests" were accurate at their time).
+- Deviated from plan: none.
+- Blocked / open question: F4 unchanged (open, llvmpipe-only, gated + printed).
+- Next: push this judge-fix commit (awaits authorization); Phase H plan revision.

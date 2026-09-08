@@ -11,6 +11,17 @@ fn spv_words(bytes: &[u8]) -> Vec<u32> {
         .collect()
 }
 
+/// F1 (BUG_HUNT): split a flat group count across x/y so no dimension exceeds
+/// the device's maxComputeWorkGroupCount.x. Shaders rebuild the flat index as
+/// `y * (NumWorkGroups.x * WorkGroupSize.x) + x`, so gx must be used as the
+/// row length by both sides. Pure function - unit-tested for the gy>1 cases
+/// that only minimum-spec drivers (llvmpipe: 65535) actually exercise.
+pub fn split_groups(groups_x: u32, max_x: u32) -> (u32, u32) {
+    let gx = groups_x.min(max_x.max(1)).max(1);
+    let gy = groups_x.div_ceil(gx);
+    (gx, gy)
+}
+
 /// F8 (BUG_HUNT): destroys every handle created so far, on every path.
 struct PassRes<'a> {
     device: &'a ash::Device,
@@ -72,13 +83,13 @@ impl VkContext {
         let device = self.device_interface();
         let words = spv_words(spv);
 
-        let gx = groups_x.min(self.max_groups_x()).max(1);
-        let gy = groups_x.div_ceil(gx);
+        let (gx, gy) = split_groups(groups_x, self.max_groups_x());
         if gy > 65535 {
             return Err(format!(
                 "dispatch of {groups_x} groups exceeds device 2D workgroup limit \
                  ({}/{})",
-                self.max_groups_x(), 65535
+                self.max_groups_x(),
+                65535
             ));
         }
 
