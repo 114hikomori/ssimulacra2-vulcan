@@ -79,6 +79,8 @@ jobs:
           chmod +x build/ssimulacra2 build-dump/ssimulacra2
           bash oracle/gen_goldens.sh run1
       - name: cargo test (lavapipe)
-        run: cargo test -j 2 --workspace --no-fail-fast
+        # --nocapture: the determinism test's kernel-localization output and the
+        # per-device validation/fma_ieee summary are the point of this leg.
+        run: cargo test -j 2 --workspace --no-fail-fast -- --nocapture
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
