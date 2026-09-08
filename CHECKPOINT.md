@@ -539,3 +539,15 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: push this NOTE fix (awaits authorization) for one more green CI, then
   F4 fully closed and only Phase H (M10) remains (deferred per human).
+
+## 2026-09-08 — run #19 GREEN: NOTE fix confirmed on llvmpipe, loop closed at 73e00dd
+
+- Done: AUTH: human "push" -> pushed 73e00dd. Run #19 log-verified (not just
+  green): 'identical score assert skipped' count 1 -> 0; identity now asserts
+  got==want bit-exact (100.00000000 vs 100.00000000, drift 0e0) on llvmpipe;
+  12 legitimate photometric skip-notes remain (was 13 incl. the false one);
+  e2e_matches_oracle ok, 0 failures, clippy -D warnings clean, validation on.
+- Deviated from plan: none.
+- Blocked / open question: none.
+- Next: Phase H (M10 optimization) plan revision - deferred by human until
+  requested; repo state otherwise milestone-complete through M9 with F4 closed.
