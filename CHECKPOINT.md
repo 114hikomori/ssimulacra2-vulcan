@@ -275,6 +275,27 @@ list owns the ids.
   (AMD reports u32::MAX groups) - logic reviewed + guarded.
 - Next: push to run CI with F2/F4/F12 changes (awaits authorization); then Phase H.
 
+## 2026-09-08 — CI runs #7-#11: F4 anomaly NARROWED to maps_combine internals (armchair hypotheses exhausted)
+
+- Done: CI green at run #11 (0d6969c) with validation active (validation=true, zero VUID
+  hits), llvmpipe max_groups_x=65535 confirming F1 was REAL on CI's own driver (old flat
+  196608-group dispatches were invalid usage there; 2D split fixes it). Run #9 disproved
+  the num_s-contraction theory (drift bit-identical to #8). Run #11 stage comparison is
+  decisive: x1==x2, m11==m12==m22, s11==s12==s22, mu1==mu2 ALL bit-equal on llvmpipe,
+  yet maps_combine emits d = 2^-24 at 20718/36864 pixels (56%) for identical inputs -
+  the divergence is INSIDE maps_combine's evaluation of structurally-different but
+  value-identical expressions (num_s from one doubled subtraction vs denom_s from two
+  added subtractions; likely LLVM-level mul/sub->fma fusion differing per shape despite
+  `precise`, or its f64 path). Every upstream kernel is deterministic and equal.
+- Deviated from plan: none new.
+- Blocked / open question: F4 remains OPEN as a driver-behavior investigation (needs a
+  shader-internal probe dumping q/num_s/denom_s/num_m per pixel on llvmpipe - another
+  CI round-trip per hypothesis; armchair analysis exhausted after 5 cycles -> handing
+  back per AGENTS 3). Impact is llvmpipe-only: score asserts IEEE-gated, anomaly printed
+  loudly in CI, RDNA2 exact.
+- Next: human decision on (a) Phase H plan revision (optimization + llvmpipe probe),
+  (b) any further pushes.
+
 ## 2026-09-08 — adversarial verification pass (2 bugs fixed, 3 corrections)
 
 - Done: Two parallel attacker passes over the finished M0-M9 work.
