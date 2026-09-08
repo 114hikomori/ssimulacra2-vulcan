@@ -717,3 +717,19 @@ list owns the ids.
 - Next: H3 prep-LUT (srgb_to_linear 256-entry table, bit-identical by
   construction) - biggest remaining host lever (prep ~400ms); M10 re-check
   after it.
+
+## 2026-09-08 — CI run #23 GREEN: H2.2 batched-submit + committed sync-validation confirmed on llvmpipe
+
+- Done: Pushed 7f02282 (AUTH: human standing grant "I allow push if it runs
+  CI"). Log-verified on lavapipe: 0 validation errors, 0 sync-hazard lines,
+  14 ok, identity 0/36864 & 100.00000000 (drift 0e0), F4 probe C 0/12288,
+  mul_planes 2D bit-exact 12.5M. So the committed vk_layer_settings.txt
+  (validate_sync) is accepted by CI's VVL and the per-scale barriers are
+  hazard-free on the software driver too. H2 fully done.
+- Deviated from plan: none.
+- Blocked / open question: none.
+- Next: H3 prep-LUT (256-entry table for srgb_to_linear on alpha-free 8-bit
+  images; unit test asserts table[k]==srgb_to_linear(k/255) for all 256, and
+  the 12-fixture byte-identity + full sync battery must hold). M10 re-check
+  after (target: prep ~400 ms -> ~50 ms; big projected ~0.7-0.75, near oracle
+  0.75). Still needs the human's H6 call on context-init/validation for photo.
