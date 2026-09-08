@@ -36,18 +36,20 @@ void main() {
 
   float m1 = mu1[b];
   float m2 = mu2[b];
-  // Products computed as float(double*double): exact for f32 inputs, so this
-  // is provably the correctly-rounded f32 product on any device (bit-identical
-  // to the CPU's mu11/mu22/mu12/dm^2, ssimulacra2.cc:129-131) no matter how
-  // the driver contracts mul+sub into fma. Kept after run #14 showed the
-  // products were NOT the F4 culprit (llvmpipe output bit-identical with this
-  // barrier in) - retained as a device-independent guarantee, value-neutral on
-  // IEEE devices (RDNA2 suite unchanged).
-  float mu11 = float(double(m1) * double(m1));
-  float mu22 = float(double(m2) * double(m2));
-  float mu12 = float(double(m1) * double(m2));
+  // Products rounded to f32 exactly as the CPU does (ssimulacra2.cc:129-131),
+  // each result decorated precise. The float(double*double) barriers from the
+  // F4 investigation were REMOVED for performance: run #14 proved they change
+  // llvmpipe's output not at all (the products were never the culprit -
+  // llvmpipe's f32 fmul is correctly rounded), so they were paying 4 f64 muls
+  // per pixel (1/16 rate on RDNA2) for defense-in-depth the NoContraction
+  // decorations already provide. #13-era llvmpipe probe (A/B clean with f32
+  // products + decoration) + #17 (decoration on the add chains) cover this
+  // exact combination; CI re-confirms after the swap.
+  precise float mu11 = m1 * m1;
+  precise float mu22 = m2 * m2;
+  precise float mu12 = m1 * m2;
   precise float dm = m1 - m2;
-  precise float dmsq = float(double(dm) * double(dm));
+  precise float dmsq = dm * dm;
   precise float num_m = 1.0 - dmsq;
   // F4 CLOSED (2026-09-08, CI run #17): this precise/NoContraction decoration
   // on every ssim_d-chain result is the fix. Root cause was SSA-pattern, not

@@ -551,3 +551,32 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: Phase H (M10 optimization) plan revision - deferred by human until
   requested; repo state otherwise milestone-complete through M9 with F4 closed.
+
+## 2026-09-08 — judge VERIFIED + perf item #1: f64 product barrier removed (decoration is the real guard)
+
+- Done: Judge verdict VERIFIED (3 evidence platforms; independently re-ran
+  spirv-dis + local 18/18 + CI logs; no fraud; my BUG_HUNT F4 reduction was
+  itself corrected by the probe+bisection process). Handling judge's latent
+  perf item: maps_combine carried 4 f64 muls/pixel from the F4 investigation
+  (float(double*double) products). Run #14 had already PROVEN those barriers
+  are value-noops on llvmpipe (its f32 fmul is correctly rounded), and #17's
+  real fix was the NoContraction decorations (OpFma=0). So the barriers were
+  pure per-pixel cost (1/16 f64 rate on RDNA2) behind the decoration.
+  Removed them (products back to precise f32); SPIR-V verified:
+  NoContraction=16, OpFma=0, OpFMul_double=0, only the intentional f64
+  quotient (2 OpFDiv_double: q + edge) remains.
+  HONEST timing (interleaved 5x medians, RDNA2): big 1.982(f64) vs 2.005(f32),
+  photo 0.420 vs 0.419 - NO measurable local win; the GPU path is
+  launch/dispatch-bound (maps_combine is ~1 of ~100 dispatches/image), which
+  itself confirms M9's Phase-H priority is pipeline caching, not this kernel.
+  The removal matters for the compute-bound future (post-Phase-H) + hygiene.
+  Also BUG_HUNT.md:223 recommended-order line updated (F4 no longer "open").
+- Deviated from plan: none.
+- Blocked / open question: The f32-product + full-decoration combo is the
+  same VALUES as #17 on llvmpipe (#14 = value-noop argument) but has NOT been
+  run on the one non-IEEE device locally can't test. The probe is now a HARD
+  all-device assert, so CI is the safe gate: green => confirmed, red => revert
+  to known-good f64 form. Needs push authorization to run.
+- Next: push (awaits auth) for CI llvmpipe confirmation; record this as the
+  post-F4 baseline for M10 (M9 2.3x figure predates #14-#19, re-baseline in
+  the Phase-H plan revision).

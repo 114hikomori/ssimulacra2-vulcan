@@ -220,5 +220,8 @@ discriminating constants; dump header format vs `oracle_dump.rs`.
 
 1. F1 + F2 together (limits query + validation package) — they mask each other.
 2. F3 (comparator NaN guards — five lines).
-3. F4 localization experiment (one CI test, resolves the open anomaly).
+3. F4 localization experiment (one CI test, resolves the open anomaly). DONE
+   2026-09-08: probe (runs #13-#15) + human-supplied SSA-pattern mechanism +
+   NoContraction fix (run #17) closed it; identity gates tightened to all-device
+   and green on llvmpipe (runs #18-#19). See the F4 resolution above.
 4. F5–F9 as opportunistic cleanups; F10–F12 are documentation/coverage.
