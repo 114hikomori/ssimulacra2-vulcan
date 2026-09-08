@@ -32,15 +32,18 @@ fn score_pair(
 ) -> f64 {
     let n = a.w * a.h;
     let (l1, l2) = prof.time("prep", || {
-        let s1 = match &a.alpha {
-            Some(al) => alpha_blend(&a.srgb, al, bg, n),
-            None => a.srgb.clone(),
+        // H3: 8-bit alpha-free pixels are on the k/255 grid -> 256-entry LUT
+        // (bit-identical, see cpu.rs), and reading srgb directly skips the
+        // old 50 MB clone. Alpha-blended pixels are arbitrary floats -> keep
+        // the exact per-element path.
+        let lut = ssimulacra2_vulkan::cpu::linearize_lut();
+        let lin = |dec: &ssimulacra2_vulkan::cpu::Decoded| -> Vec<f32> {
+            match &dec.alpha {
+                Some(al) => to_linear(&alpha_blend(&dec.srgb, al, bg, n)),
+                None => ssimulacra2_vulkan::cpu::to_linear_8bit(&dec.srgb, &lut),
+            }
         };
-        let s2 = match &b.alpha {
-            Some(al) => alpha_blend(&b.srgb, al, bg, n),
-            None => b.srgb.clone(),
-        };
-        (to_linear(&s1), to_linear(&s2))
+        (lin(a), lin(b))
     });
     let scales = pipeline(ctx, &l1, &l2, a.w, a.h, prof);
     prof.time("score", || score(&scales))

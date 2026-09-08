@@ -26,6 +26,52 @@ fn decode_chain_bit_exact_vs_oracle() {
     }
 }
 
+// H3: the 256-entry LUT (used for alpha-free 8-bit PNGs) must be bit-identical
+// to the per-element path, and the k-recovery (round(v*255)==k) exact, or the
+// CLI's prep would silently drift from the oracle.
+#[test]
+fn to_linear_8bit_lut_bit_exact() {
+    use ssimulacra2_vulkan::cpu::{linearize_lut, to_linear, to_linear_8bit};
+    let lut = linearize_lut();
+    let r = 1.0f32 / 255.0f32;
+    for k in 0..=255usize {
+        let v = (k as f32) * r; // exactly what decode_png stores
+        assert_eq!(
+            (v * 255.0f32).round() as usize,
+            k,
+            "grid recovery failed at k={k}"
+        );
+        assert_eq!(
+            to_linear_8bit(&[v], &lut)[0].to_bits(),
+            to_linear(&[v])[0].to_bits(),
+            "LUT != per-element at k={k}"
+        );
+    }
+    // And the LUT path must equal the oracle linear dumps for the alpha-free
+    // fixtures the CLI runs through it (photo, gray).
+    for fixture in ["photo", "gray"] {
+        let d = decode_png(&format!(
+            "{}/../tests/fixtures/{}_orig.png",
+            env!("CARGO_MANIFEST_DIR"),
+            fixture
+        ))
+        .unwrap();
+        assert!(d.alpha.is_none(), "{fixture} expected alpha-free");
+        let lin = to_linear_8bit(&d.srgb, &lut);
+        let g = dump(fixture, "linear_orig_s0");
+        let bad: Vec<usize> = (0..lin.len())
+            .filter(|&i| lin[i].to_bits() != g.f32_data[i].to_bits())
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "{fixture}: LUT differs from oracle at {} (first {:?})",
+            bad.len(),
+            bad.first()
+        );
+        println!("{fixture}: LUT bit-exact vs oracle over {} values", lin.len());
+    }
+}
+
 #[test]
 fn cpu_pipeline_bit_exact_vs_oracle() {
     for fixture in ["photo", "step", "gray", "s8", "s15"] {

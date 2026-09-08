@@ -149,6 +149,37 @@ pub fn to_linear(srgb: &[f32]) -> Vec<f32> {
     srgb.iter().map(|&v| srgb_to_linear(v)).collect()
 }
 
+/// H3: 256-entry lookup table for 8-bit PNG sRGB values. Entry k is built by
+/// applying the SAME `srgb_to_linear` to the SAME expression the decoder uses
+/// (`(k as f32) * (1.0/255.0)`), so for any decoder-produced value v=fl(k/255)
+/// the table returns exactly the bit pattern per-element to_linear(v) returns.
+/// decode_png only accepts BitDepth::Eight, so every alpha-free pixel is on
+/// this grid; alpha-blended values are arbitrary floats and must NOT use it
+/// (caller gates on provenance). Bit-identity is asserted over all 256 values
+/// against to_linear AND against the oracle linear dumps in cpu_parity.
+pub fn linearize_lut() -> [f32; 256] {
+    let mut t = [0f32; 256];
+    let r = 1.0f32 / 255.0f32;
+    for (k, slot) in t.iter_mut().enumerate() {
+        *slot = srgb_to_linear((k as f32) * r);
+    }
+    t
+}
+
+/// to_linear for values known to be on the k/255 grid (8-bit alpha-free PNGs).
+/// Grid recovery: |fl(fl(k/255)*255) - k| < 5e-5 << 0.5 for all k in 0..255,
+/// so round() recovers k exactly (asserted for all 256 in cpu_parity).
+pub fn to_linear_8bit(srgb: &[f32], lut: &[f32; 256]) -> Vec<f32> {
+    srgb
+        .iter()
+        .map(|&v| {
+            let k = (v * 255.0f32).round();
+            debug_assert!((0.0..=255.0).contains(&k), "off-grid value in 8-bit path");
+            lut[k.clamp(0.0, 255.0) as usize]
+        })
+        .collect()
+}
+
 /// CubeRootAndAdd (fast_math-inl.h:177-210) - same transcription as the shader.
 fn cbrt_and_add(x: f32, add: f32) -> f32 {
     const K1_3: f32 = 1.0 / 3.0;

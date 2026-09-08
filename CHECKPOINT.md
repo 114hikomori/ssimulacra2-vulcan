@@ -733,3 +733,26 @@ list owns the ids.
   the 12-fixture byte-identity + full sync battery must hold). M10 re-check
   after (target: prep ~400 ms -> ~50 ms; big projected ~0.7-0.75, near oracle
   0.75). Still needs the human's H6 call on context-init/validation for photo.
+
+## 2026-09-08 — H3 DONE: 256-entry linearize LUT + clone removal; big now sub-second
+
+- Done: cpu.rs gained linearize_lut()/to_linear_8bit(); main.rs prep branches
+  per-image on alpha presence (8-bit grid values proven by decode's
+  BitDepth::Eight gate; alpha-blended floats keep the exact per-element path).
+  Alpha-free path also drops the 50 MB srgb.clone() (reads planes directly).
+  Bit-identity proof: new cpu_parity test asserts for all 256 k that
+  round(fl(k/255)*255)==k and LUT[k]==to_linear value, AND that
+  to_linear_8bit over photo/gray planes equals the oracle linear dumps
+  bit-for-bit. 12/12 CLI fixtures byte-identical vs pre-H3. suite 19/19 with
+  validate_sync committed, clippy -D warnings clean.
+  MIN-of-5 same session: big 1.078 -> 0.908 (prep 400 -> 96 ms), photo flat
+  0.292 (context-bound, not prep-bound). Oracle same-batch min ~0.72-0.75.
+  Cumulative phase H on big: 1.90 -> 0.91 (-52%); gap to oracle now ~1.2x.
+  M10 re-check: NOT yet met (0.91 > ~0.75; needs the ~170 ms context-init
+  decision + one more lever).
+- Deviated from plan: none.
+- Blocked / open question: M10 on photo is gated on the H6 human call (release
+  validation default). Remaining big budget: context-init ~170, blur+submit
+  ~170, readback ~120, decode+prep ~150, norms/upload/norm-residual ~140.
+- Next: quiet-machine stage profile, then pick H4/H5 vs escalating the
+  validation decision early; push this per standing grant.
