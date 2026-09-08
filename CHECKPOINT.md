@@ -146,3 +146,25 @@ list owns the ids.
 - Next: Phase F — downsample_box2.comp (clamp-replicate, /4, exact order) + per-scale loop
   (GPU XYB recompute, break rule, weight-index shift) + score.rs (108 weights codegen from
   source + checksum vs dumps) + end-to-end: all fixtures ≤1e-5 score, identity ==100.0.
+
+## 2026-09-08 — M5 ✅ + M6 ✅ (Phase F complete)
+
+- Done: Full 6-scale GPU pipeline (downsample_box2.comp bit-exact vs CPU order; mul_planes;
+  per-scale XYB recompute; break rule; weight-index shift via c-major loop over scales.size()).
+  score.rs: 108 weights codegen'd from src/ssimulacra2.cc by build.rs as exact bit patterns.
+  e2e vs oracle dumps, 13 runs (10 fixtures + identical + alpha r0/r1): weighted drift
+  ≤3.9e-9 (bar 1e-6), score drift ≤4.5e-8 (bar 1e-5), identity weighted drift EXACTLY 0 and
+  score == 100.0 exactly. Near-cutoff s8/s9/s15 exercise the missing-scale weight shift.
+  Key fix en route: GPU f32 fdiv measured 1 ulp off oracle on RDNA2 → amplified x225 by the
+  large tuned weights (noise fixture score drift 6.2e-5 > bar) → quotient + edge ratio now
+  computed in f64 in-shader (shaderFloat64 feature enabled at device creation after
+  validation caught the missing enable, VUID-pCode-08740); double-rounding risk ~2^-29
+  documented in shader header. Validation clean across full suite; 8 tests green.
+- Deviated from plan: edge_d1 double->float deviation ELIMINATED by f64 in-shader ratio
+  (plan §7 documented it as accepted; now bit-matched to CPU double then stored f32).
+  f64 use is a correctness choice; Phase H may replace with correctly-rounded f32 division
+  emulation if RDNA2 f64 rate (1/16) shows in profiles.
+- Blocked / open question: none.
+- Next: Phase G — cpu.rs fallback path (faithful Rust reimpl, validated vs dumps), PNG-decode
+  CLI with --gpu, ICC reject message, .github/workflows/ci.yml (ubuntu+lavapipe+oracle),
+  validation matrix green incl. gray/alpha/odd/small (M7) + CLI/CI/fallback (M8).

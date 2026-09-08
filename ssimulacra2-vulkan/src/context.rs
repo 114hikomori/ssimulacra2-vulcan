@@ -99,7 +99,16 @@ impl VkContext {
         let qis = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family)
             .queue_priorities(&prio)];
-        let dci = vk::DeviceCreateInfo::default().queue_create_infos(&qis);
+        // maps_combine uses f64 division (correctly-rounded quotient to match
+        // the oracle's f32 fdiv); requires the shaderFloat64 feature enabled.
+        let feats = unsafe { instance.get_physical_device_features(physical) };
+        if feats.shader_float64 == vk::FALSE {
+            return Err("device lacks shaderFloat64".into());
+        }
+        let enabled = vk::PhysicalDeviceFeatures::default().shader_float64(true);
+        let dci = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&qis)
+            .enabled_features(&enabled);
         let device = unsafe { instance.create_device(physical, &dci, None) }
             .map_err(|e| format!("device: {e:?}"))?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };

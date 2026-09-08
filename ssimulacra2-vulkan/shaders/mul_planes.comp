@@ -1,0 +1,11 @@
+#version 450
+// Elementwise product of two plane-major 3-plane images (ssimulacra2.cc:68-79).
+layout(local_size_x = 64) in;
+layout(push_constant) uniform PC { uint n; };  // n = 3*w*h
+layout(set = 0, binding = 0) readonly buffer A { float a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float b[]; };
+layout(set = 0, binding = 2) writeonly buffer O { float o[]; };
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i < n) { o[i] = a[i] * b[i]; }
+}

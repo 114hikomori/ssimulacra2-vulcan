@@ -1,10 +1,16 @@
 #version 450
 // Per-pixel error maps at one scale, from the 5 blurred images + XYB inputs.
 // ssim_d: SSIMMap f32 semantics (ssimulacra2.cc:126-152) - products rounded to
-// f32 exactly as the CPU does (float mu11/mu22/mu12), quotient in f32, d>=0.
-// edge_d1: EdgeDiffMap ratio (ssimulacra2.cc:173-175) computed in f32 instead
-// of the CPU's double - documented deviation, budgeted <=2e-6, measured in
-// tests/maps_parity.rs.
+// f32 exactly as the CPU does (precise, ssimulacra2.cc:129-131); the quotient
+// is computed in f64 and rounded to f32 (matches the CPU's correctly-rounded
+// f32 division to within double-rounding, ~2^-29 of pixels by 1 ulp - the
+// GPU's native f32 fdiv was measured 1 ulp off on RDNA2, amplified x225 by
+// the large tuned weights).
+// edge_d1: EdgeDiffMap ratio in f64 (ssimulacra2.cc:173-175) - the CPU
+// computes it in double from f32 inputs; f64 here matches bit-exactly, then
+// stores rounded to f32 (norms deviation from storage rounding ~1e-9,
+// documented).
+#extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x = 64) in;
 
 layout(push_constant) uniform PC { uint n; };
@@ -40,10 +46,14 @@ void main() {
   precise float num_m = 1.0 - dmsq;
   float num_s = 2.0 * (s12[b] - mu12) + kC2;
   float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
-  float d = 1.0 - num_m * num_s / denom_s;
+  float prod = num_m * num_s;
+  float q = float(double(prod) / double(denom_s));
+  float d = 1.0 - q;
   ssimd[b] = max(d, 0.0);
 
   float t1 = abs(img1[b] - m1);
   float t2 = abs(img2[b] - m2);
-  edged[b] = (1.0 + t2) / (1.0 + t1) - 1.0;
+  double e1 = 1.0 + double(t1);
+  double e2 = 1.0 + double(t2);
+  edged[b] = float(e2 / e1 - 1.0);
 }
