@@ -49,3 +49,28 @@ fn cli_identity_and_rejections() {
     let (ok, _) = run(&["tests/fixtures/photo_orig.png", "tests/fixtures/odd_dist.png"]);
     assert!(!ok, "size mismatch must be rejected");
 }
+
+#[test]
+fn cli_asymmetric_alpha_dispatch_matches_oracle() {
+    // Regression (found by adversarial verification 2026-09-08): the oracle's
+    // worst-of-bg dual pass fires ONLY when the ORIGINAL has alpha
+    // (ssimulacra2_main.cc:105). When only the distorted image has alpha it is
+    // a single bg=0.5 pass. Goldens: oracle/scores_asymmetric.txt.
+    let cases = [
+        ("gray_orig", "alpha_dist", -53.27997245f64),
+        ("alpha_orig", "gray_dist", -108.32956807f64),
+    ];
+    for (a, b, want) in cases {
+        for extra in [&[] as &[&str], &["--cpu"][..]] {
+            let oa = format!("tests/fixtures/{a}.png");
+            let ob = format!("tests/fixtures/{b}.png");
+            let mut args: Vec<&str> = extra.to_vec();
+            args.push(oa.as_str());
+            args.push(ob.as_str());
+            let (ok, got) = run(&args);
+            assert!(ok, "{a}/{b} {extra:?} failed");
+            let g: f64 = got.parse().unwrap();
+            assert!((g - want).abs() <= 1e-5, "{a} vs {b} ({extra:?}): {g} vs oracle {want}");
+        }
+    }
+}

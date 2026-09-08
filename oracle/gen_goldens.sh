@@ -4,8 +4,9 @@
 # 'big' is score-only (dump volume would be >1.5 GB); its golden is the CLI score.
 export PATH=/ucrt64/bin:$PATH
 cd "$(dirname "$0")/.."
-EXE=./build-dump/ssimulacra2.exe
 RUN="${1:?usage: gen_goldens.sh <run-tag>}"
+EXE=./build-dump/ssimulacra2
+[ -x "$EXE.exe" ] && EXE="$EXE.exe"
 for p in photo grad noise step odd s8 s9 s12 s15 alpha gray identical; do
   d="dumps/$p/$RUN"
   rm -rf "$d"

@@ -214,3 +214,31 @@ list owns the ids.
 - Blocked / open question: M10 ("optimized path beats measured CPU baseline") is explicitly
   Phase H = "separate plan revision" in the approved plan; not attempted under this run.
 - Next: Phase H plan revision (optimization) + first push to enable CI (both await human).
+
+## 2026-09-08 — adversarial verification pass (2 bugs fixed, 3 corrections)
+
+- Done: Two parallel attacker passes over the finished M0-M9 work.
+  BUG 1 (real, fixed): CLI alpha dispatch used worst-of-bg when EITHER image
+  had alpha; the oracle dual-passes only when the ORIGINAL does
+  (ssimulacra2_main.cc:105). Asymmetric input gray_orig vs alpha_dist diverged
+  by 10.918. Fixed main.rs; regression test cli_asymmetric_alpha_dispatch with
+  oracle-recorded goldens (oracle/scores_asymmetric.txt: -53.27997245,
+  -108.32956807) for both gpu and cpu modes. 16 other adversarial cases
+  (swapped pairs, cross pairs incl. negative scores, determinism x3, missing
+  file) all passed <=1.3e-7.
+  BUG 2 (test hygiene, fixed): cpu_form.rs printed drift but asserted nothing
+  (vacuous test cited as evidence). Now asserts bit-exact (d == 0.0) vs dumps.
+  e2e identity case additionally asserts weighted drift == 0.0 exactly.
+  CI (fixed before first run): gen_goldens.sh / run_scores.sh hardcoded
+  .exe (would fail on Linux CI); now probe "$EXE.exe" then bare. clippy step
+  gained --all-targets.
+  CORRECTIONS to earlier entries (append-only, so corrected here): M6 entry's
+  "weighted <=3.9e-9" was the s8 value; true max over the 13 runs is 4.18e-9
+  (s15) - still <=1e-6 bar. "identity weighted EXACTLY 0" was printed-only at
+  the time; now asserted. M3's blur_parity 2e-6 bar intentionally kept as the
+  M3 exit artifact; the stronger bit-exactness lives in maps_parity.
+  Verified after fixes: full suite green (13 tests incl. new regression),
+  clippy --all-targets zero warnings.
+- Deviated from plan: none new.
+- Blocked / open question: none.
+- Next: unchanged - Phase H plan revision + push authorization for CI, both await human.

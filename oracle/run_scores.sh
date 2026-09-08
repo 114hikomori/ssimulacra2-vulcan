@@ -3,7 +3,8 @@
 # Usage: oracle/run_scores.sh [path-to-exe]
 export PATH=/ucrt64/bin:$PATH
 cd "$(dirname "$0")/.."
-EXE="${1:-./build/ssimulacra2.exe}"
+EXE="${1:-./build/ssimulacra2}"
+[ -x "$EXE.exe" ] && EXE="$EXE.exe"
 for p in photo grad noise step odd s8 s9 s12 s15 alpha gray big; do
   s="$("$EXE" "tests/fixtures/${p}_orig.png" "tests/fixtures/${p}_dist.png" 2>&1)"
   echo "$p $s"

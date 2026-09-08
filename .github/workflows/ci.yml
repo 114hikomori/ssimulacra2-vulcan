@@ -70,4 +70,4 @@ jobs:
       - name: cargo test (lavapipe)
         run: cargo test -j 2 --workspace
       - name: clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings

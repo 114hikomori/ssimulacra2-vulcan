@@ -13,5 +13,6 @@ fn cpu_form_vs_dump() {
         let golden = Dump::read(dump_path(fixture, "mu1_s0"));
         let (d, i) = max_abs_diff(&got, &golden.f32_data);
         println!("{fixture}: rust-cpu vs dump max abs {d:e} at {i}");
+        assert_eq!(d, 0.0, "{fixture}: CPU blur form not bit-exact vs oracle dump");
     }
 }

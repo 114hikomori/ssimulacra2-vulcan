@@ -89,7 +89,11 @@ fn main() {
             }
         }
     };
-    let has_alpha = a.alpha.is_some() || b.alpha.is_some();
+    // Oracle contract (ssimulacra2_main.cc:105-114): the worst-of-bg{0.1,0.9}
+    // dual pass fires ONLY when the ORIGINAL image has alpha; if only the
+    // distorted image has alpha it is a single pass with bg=0.5 (the library
+    // default), which blends each alpha-bearing image.
+    let has_alpha = a.alpha.is_some();
     let s = if has_alpha {
         let s0 = score_pair(ctx.as_ref(), &a, &b, 0.1);
         let s1 = score_pair(ctx.as_ref(), &a, &b, 0.9);

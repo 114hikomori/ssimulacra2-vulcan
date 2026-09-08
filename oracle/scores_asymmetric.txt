@@ -1,0 +1,2 @@
+gray_orig alpha_dist -53.27997245
+alpha_orig gray_dist -108.32956807

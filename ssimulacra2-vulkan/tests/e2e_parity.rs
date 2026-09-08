@@ -35,6 +35,7 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     println!("{fixture} r{run}: weighted drift {wd:e}, score {got:.8} vs {want:.8} (drift {:e})", (got - want).abs());
     if expect_exact_100 {
         assert_eq!(got, 100.0, "identity must be exactly 100");
+        assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
     }
     assert!((got - want).abs() <= 1e-5, "{fixture} score drift");
     assert!(wd <= 1e-6, "{fixture} weighted drift {wd:e}");
