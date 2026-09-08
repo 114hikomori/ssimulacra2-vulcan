@@ -1,3 +1,4 @@
+#![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
 // Judge finding #3 (2026-09-08): the 2D dispatch path (gy>1) had no strict
 // gate - it only ran on CI's big fixture behind the 0.5 sanity bar. Two fixes:
 // (a) pure unit tests for split_groups covering gy>1 arithmetic on any host;
