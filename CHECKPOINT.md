@@ -580,3 +580,20 @@ list owns the ids.
 - Next: push (awaits auth) for CI llvmpipe confirmation; record this as the
   post-F4 baseline for M10 (M9 2.3x figure predates #14-#19, re-baseline in
   the Phase-H plan revision).
+
+## 2026-09-08 — CI run #20 GREEN: perf swap (f32 products + decoration) confirmed on llvmpipe, bit-exact to #17
+
+- Done: Pushed e72516d + 024ad4e (AUTH: human "push"). Run #20 log-verified
+  with the barrier REMOVED: probe A-E all 0/12288 max|gpu-cpu|=0e0 (hard
+  all-device assert, passed), identity 0/36864 + ssim_d_all_zero equal,
+  identical score 100.00000000 drift 0e0, 0 failures, clippy clean. This
+  empirically closes the judge's perf item: NoContraction decorations alone
+  keep maps_combine IEEE-faithful on llvmpipe (f64 product barrier was pure
+  cost, as reasoned - 4 f64 muls/pixel gone; f64 quotient intentionally kept).
+  F4 stays CLOSED on all devices. Nothing pending; local == origin at 024ad4e.
+- Deviated from plan: none.
+- Blocked / open question: none open.
+- Next: Phase H (M10) plan revision when the human calls it - first inputs
+  ready: re-baseline M9 (2.3x predates #14-#20), top lever = pipeline/
+  descriptor caching per launch-bound finding, then tiled blur / fused mul /
+  f32-division-emulation options ranked by fresh profile.
