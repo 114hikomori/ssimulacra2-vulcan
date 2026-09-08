@@ -49,20 +49,18 @@ void main() {
   float dm = m1 - m2;
   float dmsq = float(double(dm) * double(dm));
   float num_m = 1.0 - dmsq;
-  // F4 localization (probe runs #13/#14): cases where a kernel product meets
-  // a buffer in subtraction diverge (C/D/E); same-device trees are clean
-  // (A/B). The f64 product barrier changed llvmpipe's output NOT AT ALL
-  // (bit-identical), so the products are not the culprit. The remaining
-  // asymmetry: delta+delta strength-reduces to 2*delta and contracts into
-  // fma(2,delta,kC2) in num_s only (denom_s uses two distinct SSA values ->
-  // plain adds), and llvmpipe's fma is inaccurate at large exponent spread
-  // (tiny delta vs kC2) - which is exactly why probe A (moderate delta) is
-  // clean while C diverges on ~71% of m values. Barrier: do the doubling in
-  // f64 (exact) so num_s becomes a lone correctly-rounded f32 add - the same
-  // tree shape as denom_s. Identity then rests only on symmetric evaluation
-  // and x/x division, both observed exact on llvmpipe.
+  // F4 status (runs #13-#15, three expression-level interventions, all
+  // refuted): C's divergence (8695/12288, d=7*2^-24) is BIT-INVARIANT to the
+  // product path (run #14: f64 product barrier changed nothing) AND the
+  // num_s tree shape (run #15: doing the doubling in exact f64 regressed
+  // probe A/B from clean to 1-ulp divergent while leaving C untouched -
+  // reverted). The identity fixture's 20718/36864 is likewise unchanged across
+  // all three. Expression-level guessing is exhausted; the next diagnostic is
+  // a per-pixel intermediate dump (mu12/delta/num_s/denom_s/prod/q columns)
+  // on llvmpipe, which needs a human-approved CI round-trip. Until then this
+  // is the known-best form: plain adds, symmetric trees.
   float delta = s12[b] - mu12;
-  float num_s = float(double(delta) + double(delta)) + kC2;
+  float num_s = delta + delta + kC2;
   float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
   float prod = num_m * num_s;
   float q = float(double(prod) / double(denom_s));

@@ -444,3 +444,28 @@ list owns the ids.
   per-pixel intermediate dump (mu12/delta/num_s/denom_s/prod/q columns), no
   more expression-level guessing.
 - Next: push fix commit (awaits authorization).
+
+## 2026-09-08 — F4: 3 fix->verify cycles failed -> HANDING BACK per AGENTS.md section 3
+
+- Done: Run #15 (f64 island on num_s doubling) REGRESSED probe A/B on llvmpipe
+  (clean -> 1525/1104 diverge at 2^-23) while C stayed bit-identical
+  (8695/12288, d=7*2^-24) and the identity fixture stayed at 20718/36864 /
+  99.98426951. Reverted to the known-best form (#14 state: plain symmetric
+  add trees + f64 product barrier). RDNA2 verified after revert: 18/18,
+  clippy -D warnings clean.
+  Full evidence table across #13/#14/#15 (llvmpipe probe, C/D/E counts):
+  #13 baseline 8695/4201/606; #14 product barrier 8695/4201/606 (bit-identical
+  -> products ruled out); #15 num_s f64 island 8695/4058/548 + A/B regressed
+  (-> num_s tree shape ruled out as C's cause; island reverted).
+- Deviated from plan: none.
+- Blocked / open question: F4 remains OPEN (llvmpipe-only, gated, printed;
+  RDNA2 exact). Three expression-level hypotheses tried and refuted by CI
+  evidence; per the 3-cycle rule I stop here. Two human options:
+  (a) approve ONE more diagnostic round-trip: per-pixel intermediate dump
+  (mu12/delta/num_s/denom_s/prod/q columns via a debug kernel) - no more
+  guessing, direct observation of which column first diverges;
+  (b) accept the anomaly permanently under the existing policy (llvmpipe
+  sanity bars, identity gate + printed warning) and spend future CI budget
+  on Phase H instead.
+- Next: awaiting human decision (a) or (b); revert commit awaits push
+  authorization either way (restores the better llvmpipe diagnostic state).
