@@ -192,13 +192,16 @@ impl VkContext {
                 );
                 let pool_sizes = [vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::STORAGE_BUFFER)
-                    .descriptor_count(buffers.len() as u32)];
+                    // one live set per use of this shader inside a batch
+                    // (blur_h/blur_v reused 5x/scale; non-batch resets to 1).
+                    .descriptor_count((buffers.len() * 64) as u32)];
                 fresh.dp = Some(
                     device
                         .create_descriptor_pool(
                             &vk::DescriptorPoolCreateInfo::default()
+                                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                                 .pool_sizes(&pool_sizes)
-                                .max_sets(1),
+                                .max_sets(64),
                             None,
                         )
                         .map_err(|e| format!("dpool: {e:?}"))?,
@@ -220,9 +223,14 @@ impl VkContext {
         let pipeline = objs.pipe;
         let pl = objs.pl;
         unsafe {
-            device
-                .reset_descriptor_pool(objs.pool, vk::DescriptorPoolResetFlags::empty())
-                .map_err(|e| format!("dpool reset: {e:?}"))?;
+            let batch = self.batch_cmd();
+            if batch.is_none() {
+                // Non-batch: submitted + fence-waited immediately, so resetting
+                // the cached pool is safe (no prior set still in flight).
+                device
+                    .reset_descriptor_pool(objs.pool, vk::DescriptorPoolResetFlags::empty())
+                    .map_err(|e| format!("dpool reset: {e:?}"))?;
+            }
             let ds = *device
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::default()
@@ -255,7 +263,27 @@ impl VkContext {
                 .collect();
             device.update_descriptor_sets(&writes, &[]);
 
-            self.one_shot(|cb| {
+            let record = |cb: vk::CommandBuffer| {
+                // H2.2: a compute+transfer -> compute+transfer barrier makes
+                // every prior dispatch's writes and the batch's recorded upload
+                // copies visible to this dispatch. Redundant but legal in the
+                // one_shot path (whose fence already ordered prior work).
+                let bar = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(
+                        vk::AccessFlags::SHADER_READ
+                            | vk::AccessFlags::SHADER_WRITE
+                            | vk::AccessFlags::TRANSFER_READ,
+                    );
+                device.cmd_pipeline_barrier(
+                    cb,
+                    vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[bar],
+                    &[],
+                    &[],
+                );
                 device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipeline);
                 if !push.is_empty() {
                     device.cmd_push_constants(cb, pl, vk::ShaderStageFlags::COMPUTE, 0, push);
@@ -269,7 +297,17 @@ impl VkContext {
                     &[],
                 );
                 device.cmd_dispatch(cb, gx, gy, 1);
-            })?;
+            };
+
+            match batch {
+                Some(cmd) => {
+                    record(cmd);
+                    // end_batch frees it after the single submit; the pool is
+                    // shared across a scale's uses hence max_sets(64) + no reset.
+                    self.batch_track_sets(objs.pool, ds);
+                }
+                None => self.one_shot(record)?,
+            }
         }
         Ok(())
     }

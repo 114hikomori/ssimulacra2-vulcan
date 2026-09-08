@@ -103,36 +103,51 @@ pub fn compute_ssimulacra2_gpu_profiled(
         if cw < 8 || ch < 8 {
             break;
         }
-        if scale > 0 {
-            let d1 = g.keep(prof.time("downsample", || downsample(ctx, &l1, cw, ch)))?;
-            let d2 = g.keep(prof.time("downsample", || downsample(ctx, &l2, cw, ch)))?;
-            cw = (cw + 1) / 2;
-            ch = (ch + 1) / 2;
-            l1 = d1;
-            l2 = d2;
-        }
-        let n = cw * ch;
-        let x1 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l1, n, true)))?;
-        let x2 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l2, n, true)))?;
-        let m11 = g.keep(prof.time("mul", || mul(ctx, &x1, &x1, 3 * n)))?;
-        let m22 = g.keep(prof.time("mul", || mul(ctx, &x2, &x2, 3 * n)))?;
-        let m12 = g.keep(prof.time("mul", || mul(ctx, &x1, &x2, 3 * n)))?;
-        let s11 = g.keep(prof.time("blur", || blur_planes(ctx, &m11, cw, ch, &rg)))?;
-        let s22 = g.keep(prof.time("blur", || blur_planes(ctx, &m22, cw, ch, &rg)))?;
-        let s12 = g.keep(prof.time("blur", || blur_planes(ctx, &m12, cw, ch, &rg)))?;
-        let mu1 = g.keep(prof.time("blur", || blur_planes(ctx, &x1, cw, ch, &rg)))?;
-        let mu2 = g.keep(prof.time("blur", || blur_planes(ctx, &x2, cw, ch, &rg)))?;
-        let sd = g.keep(ctx.create_empty(3 * n))?;
-        let ed = g.keep(ctx.create_empty(3 * n))?;
-        prof.time("maps", || {
-            ctx.run_compute_push(
-                include_bytes!("../shaders/maps_combine.spv"),
-                crate::c_main(),
-                &[&x1, &x2, &mu1, &mu2, &s11, &s22, &s12, &sd, &ed],
-                ((3 * n) as u32).div_ceil(64),
-                &(n as u32).to_le_bytes(),
-            )
-        })?;
+        // H2.2: one submit + one fence per scale. Every dispatch and upload
+        // copy between begin/end records into a single command buffer with
+        // explicit compute+transfer barriers between them; any `?` below
+        // discards the batch via the guard instead of leaking an open one.
+        ctx.begin_batch()?;
+        let mut bg = BatchGuard { ctx, armed: true };
+        let pass = (|| -> Result<(GpuBuffer, GpuBuffer), String> {
+            if scale > 0 {
+                let d1 = g.keep(prof.time("downsample", || downsample(ctx, &l1, cw, ch)))?;
+                let d2 = g.keep(prof.time("downsample", || downsample(ctx, &l2, cw, ch)))?;
+                cw = (cw + 1) / 2;
+                ch = (ch + 1) / 2;
+                l1 = d1;
+                l2 = d2;
+            }
+            let n = cw * ch;
+            let x1 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l1, n, true)))?;
+            let x2 = g.keep(prof.time("xyb", || xyb_convert(ctx, &l2, n, true)))?;
+            let m11 = g.keep(prof.time("mul", || mul(ctx, &x1, &x1, 3 * n)))?;
+            let m22 = g.keep(prof.time("mul", || mul(ctx, &x2, &x2, 3 * n)))?;
+            let m12 = g.keep(prof.time("mul", || mul(ctx, &x1, &x2, 3 * n)))?;
+            let s11 = g.keep(prof.time("blur", || blur_planes(ctx, &m11, cw, ch, &rg)))?;
+            let s22 = g.keep(prof.time("blur", || blur_planes(ctx, &m22, cw, ch, &rg)))?;
+            let s12 = g.keep(prof.time("blur", || blur_planes(ctx, &m12, cw, ch, &rg)))?;
+            let mu1 = g.keep(prof.time("blur", || blur_planes(ctx, &x1, cw, ch, &rg)))?;
+            let mu2 = g.keep(prof.time("blur", || blur_planes(ctx, &x2, cw, ch, &rg)))?;
+            let sd = g.keep(ctx.create_empty(3 * n))?;
+            let ed = g.keep(ctx.create_empty(3 * n))?;
+            prof.time("maps", || {
+                ctx.run_compute_push(
+                    include_bytes!("../shaders/maps_combine.spv"),
+                    crate::c_main(),
+                    &[&x1, &x2, &mu1, &mu2, &s11, &s22, &s12, &sd, &ed],
+                    ((3 * n) as u32).div_ceil(64),
+                    &(n as u32).to_le_bytes(),
+                )
+            })?;
+            Ok((sd, ed))
+        })();
+        let (sd, ed) = pass?; // on Err, `?` returns and bg.drop() aborts the batch
+        // H0 100%-coverage rule: the batched submits+wait land here, not in any
+        // per-dispatch stage; time it so RESIDUAL stays below the 5% gate.
+        prof.time("submit-wait", || ctx.end_batch())?;
+        bg.armed = false;
+        let n = cw * ch; // post-downsample dims (cw/ch mutated inside the batch)
         let mut both = prof.time("readback", || ctx.readback_f32_all(&[&sd, &ed]))?;
         let ed_r = both.pop().unwrap_or_default();
         let sd_r = both.pop().unwrap_or_default();
@@ -147,4 +162,20 @@ pub fn compute_ssimulacra2_gpu_profiled(
         scales.push(sn);
     }
     Ok(scales)
+}
+
+/// H2.2: aborts an open batch on scope exit unless disarmed after a
+/// successful end_batch. The abort error is swallowed: whatever already
+/// triggered the unwinding is the primary error to report.
+struct BatchGuard<'a> {
+    ctx: &'a VkContext,
+    armed: bool,
+}
+
+impl Drop for BatchGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.ctx.abort_batch();
+        }
+    }
 }

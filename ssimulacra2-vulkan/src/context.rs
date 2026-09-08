@@ -39,6 +39,19 @@ pub struct VkContext {
     validation: bool,
     staging: std::sync::Mutex<Option<GpuBuffer>>,
     pub(crate) pipes: std::sync::Mutex<Pipes>,
+    batch: std::sync::Mutex<Option<Batch>>,
+}
+
+/// H2.2 (Phase H): one command buffer + one submit + one fence per scale.
+/// While a batch is open, run_compute_push records into `cmd` (with explicit
+/// compute->compute barriers) instead of submitting per dispatch, and
+/// destroy_buffer defers to `trash` (recorded dispatches still reference the
+/// buffers until the submit completes). finish() frees the sets, the trash
+/// and the command buffer after the fence wait (or without a submit on abort).
+struct Batch {
+    cmd: vk::CommandBuffer,
+    sets: Vec<(vk::DescriptorPool, Vec<vk::DescriptorSet>)>,
+    trash: Vec<GpuBuffer>,
 }
 
 /// H2.1 (Phase H): per-(shader,bindings,push,entry) reusable Vulkan objects so
@@ -195,6 +208,7 @@ impl VkContext {
             max_groups_x,
             validation,
             staging: Default::default(),
+            batch: Default::default(),
             pipes: std::sync::Mutex::new(Pipes {
                 objs: Default::default(),
                 cache: pcache,
@@ -297,7 +311,10 @@ impl VkContext {
                 vk::BufferUsageFlags::TRANSFER_SRC,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )?;
-            // F8 (BUG_HUNT): staging must be freed on every path.
+            // F8 (BUG_HUNT): staging must be freed on every path - except the
+            // one where an open batch takes ownership (copy only recorded, so
+            // it must outlive this function; finish_batch frees it post-fence).
+            let mut handed_to_batch = false;
             let built = (|| -> Result<GpuBuffer, String> {
                 let ptr = self
                     .device
@@ -316,14 +333,26 @@ impl VkContext {
                         | vk::BufferUsageFlags::STORAGE_BUFFER,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 )?;
-                self.one_shot(|cb| {
+                if let Some(cmd) = self.batch_cmd() {
+                    // H2.2: record the upload copy into the open batch instead
+                    // of submitting (the per-dispatch barrier includes a
+                    // TRANSFER src stage, so compute reads stay ordered).
                     let reg = vk::BufferCopy::default().size(bytes);
-                    self.device.cmd_copy_buffer(cb, staging.buffer, dev.buffer, &[reg]);
-                })?;
+                    self.device.cmd_copy_buffer(cmd, staging.buffer, dev.buffer, &[reg]);
+                    self.batch_trash(staging);
+                    handed_to_batch = true;
+                } else {
+                    self.one_shot(|cb| {
+                        let reg = vk::BufferCopy::default().size(bytes);
+                        self.device.cmd_copy_buffer(cb, staging.buffer, dev.buffer, &[reg]);
+                    })?;
+                }
                 Ok(dev)
             })();
-            self.device.destroy_buffer(staging.buffer, None);
-            self.device.free_memory(staging.memory, None);
+            if !handed_to_batch {
+                self.device.destroy_buffer(staging.buffer, None);
+                self.device.free_memory(staging.memory, None);
+            }
             built
         }
     }
@@ -503,10 +532,139 @@ impl VkContext {
     }
 
     pub fn destroy_buffer(&self, b: GpuBuffer) {
+        if self.batch_trash(b) {
+            return;
+        }
+        self.destroy_buffer_now(b);
+    }
+
+    fn destroy_buffer_now(&self, b: GpuBuffer) {
         unsafe {
             self.device.destroy_buffer(b.buffer, None);
             self.device.free_memory(b.memory, None);
         }
+    }
+
+    // ---- H2.2 batch API: one submit + one fence per scale -----------------
+
+    /// Begin recording a batch of dispatches into one command buffer. While
+    /// open, run_compute_push records (barrier + dispatch) instead of
+    /// submitting, create_buffer_f32 records its upload copy, and
+    /// destroy_buffer defers to after the batch fence. Not reentrant; one
+    /// batch at a time per context.
+    pub fn begin_batch(&self) -> Result<(), String> {
+        let alloc = vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.cmd_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let cb = *unsafe { self.device.allocate_command_buffers(&alloc) }
+            .map_err(|e| format!("batch cmdbuf: {e:?}"))?
+            .first()
+            .ok_or("no cmdbuf")?;
+        unsafe {
+            self.device
+                .begin_command_buffer(
+                    cb,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .map_err(|e| format!("batch begin: {e:?}"))?;
+        }
+        let mut g = self.batch.lock().map_err(|_| "batch lock".to_string())?;
+        if g.is_some() {
+            return Err("nested batch".to_string());
+        }
+        *g = Some(Batch {
+            cmd: cb,
+            sets: Vec::new(),
+            trash: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// End recording, submit once, fence-wait once, then release every set,
+    /// deferred buffer and the command buffer (all in-use resources outlive
+    /// the submit by construction).
+    pub fn end_batch(&self) -> Result<(), String> {
+        self.finish_batch(true)
+    }
+
+    /// Discard an open batch without submitting (error path): recorded commands
+    /// never reach the queue, resources are released immediately.
+    pub fn abort_batch(&self) -> Result<(), String> {
+        self.finish_batch(false)
+    }
+
+    fn finish_batch(&self, submit: bool) -> Result<(), String> {
+        let st = self
+            .batch
+            .lock()
+            .map_err(|_| "batch lock".to_string())?
+            .take()
+            .ok_or_else(|| "no batch open".to_string())?;
+        let mut r = unsafe { self.device.end_command_buffer(st.cmd) }
+            .map_err(|e| format!("batch end: {e:?}"));
+        if submit && r.is_ok() {
+            unsafe {
+                match self.device.create_fence(&vk::FenceCreateInfo::default(), None) {
+                    Ok(fence) => {
+                        let cbs = [st.cmd];
+                        let sub = vk::SubmitInfo::default().command_buffers(&cbs);
+                        r = self
+                            .device
+                            .queue_submit(self.queue, &[sub], fence)
+                            .map_err(|e| format!("batch submit: {e:?}"));
+                        if r.is_ok() {
+                            r = self
+                                .device
+                                .wait_for_fences(&[fence], true, u64::MAX)
+                                .map_err(|e| format!("batch wait: {e:?}"));
+                        }
+                        self.device.destroy_fence(fence, None);
+                    }
+                    Err(e) => r = Err(format!("batch fence: {e:?}")),
+                }
+            }
+        }
+        unsafe {
+            for (pool, sets) in &st.sets {
+                let _ = self.device.free_descriptor_sets(*pool, sets);
+            }
+            for b in &st.trash {
+                self.device.destroy_buffer(b.buffer, None);
+                self.device.free_memory(b.memory, None);
+            }
+            self.device.free_command_buffers(self.cmd_pool, &[st.cmd]);
+        }
+        r
+    }
+
+    pub(crate) fn batch_cmd(&self) -> Option<vk::CommandBuffer> {
+        self.batch.lock().ok()?.as_ref().map(|s| s.cmd)
+    }
+
+    pub(crate) fn batch_track_sets(&self, pool: vk::DescriptorPool, set: vk::DescriptorSet) {
+        if let Ok(mut g) = self.batch.lock() {
+            if let Some(st) = g.as_mut() {
+                // sets grouped by pool for one free call each; linear find is
+                // fine at a few dozen pools per batch.
+                if let Some(entry) = st.sets.iter_mut().find(|(p, _)| *p == pool) {
+                    entry.1.push(set);
+                } else {
+                    st.sets.push((pool, vec![set]));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn batch_trash(&self, b: GpuBuffer) -> bool {
+        if let Ok(mut g) = self.batch.lock() {
+            if let Some(st) = g.as_mut() {
+                st.trash.push(b);
+                return true;
+            }
+        }
+        false
     }
 }
 

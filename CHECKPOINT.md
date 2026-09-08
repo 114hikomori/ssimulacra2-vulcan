@@ -688,3 +688,32 @@ list owns the ids.
 - Next: H2.2 fused per-scale submit with explicit barriers; then H3 prep LUT;
   M10 re-check each step. CI confirmation of H2.1 piggybacks on H2.2's push
   (or push now if asked).
+
+## 2026-09-08 — H2.2 DONE: one submit+fence per scale (barriers + sync-validation battery)
+
+- Done: begin_batch/end_batch/abort_batch on VkContext record a scale's
+  dispatches + upload copies into ONE command buffer with explicit
+  COMPUTE_SHADER|TRANSFER barriers; destroy_buffer defers to post-fence trash
+  while a batch is open; BatchGuard aborts on any ? so no batch leaks open.
+  Descriptor pools now FREE_DESCRIPTOR_SET/max_sets(64), no reset in batch
+  (reset would free recorded sets - the one real hazard this step could have
+  shipped). profile gained submit-wait (the batched GPU time now lands there;
+  H0 100%-coverage rule honored).
+  Battery (plan gate): vk_layer_settings.txt validate_sync=true committed at
+  repo root + crate dir -> ALL future test runs incl. CI are sync-validated;
+  suite x5 with barriers present: 0 hazard lines, 0 failures; proof the teeth
+  work: barrier temporarily neutered -> 40 SYNC-HAZARD lines + e2e red ->
+  restored -> clean. 12/12 fixtures byte-identical vs pre-H2.2.
+  clippy -D warnings clean (fixed let_unit_value on destroy_fence).
+  Timing MIN-of-5 same session: big 1.184 -> 1.078 (oracle ~0.75 this batch;
+  cumulative H1+H2 = 1.90 -> 1.08, -43%), photo 0.380 -> 0.291. Remaining
+  residual (~10% on hot runs) is identified host cost, not hidden GPU work:
+  pre-main startup (~35-90ms floor) + uninstrumented buffer-guard/objcache
+  teardown. context-init ~170-200ms continues to dominate photo (flagged for
+  the human's validation-vs-perf call at H6).
+- Deviated from plan: none (this IS the planned H2.2 with its planned gates).
+- Blocked / open question: whether llvmpipe's VVL agrees with the committed
+  validate_sync settings - CI run decides (revert the two .txt files if red).
+- Next: H3 prep-LUT (srgb_to_linear 256-entry table, bit-identical by
+  construction) - biggest remaining host lever (prep ~400ms); M10 re-check
+  after it.

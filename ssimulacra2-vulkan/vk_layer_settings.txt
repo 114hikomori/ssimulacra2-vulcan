@@ -1,0 +1,1 @@
+# VVL loads this from CWD (loader 1.3.204+). Sync validation is a\n# standing requirement for the H2.2 batched-submit path: hazards are flagged\n# at record/submit time even when the result happens to look correct.\nkhronos_validation.validate_sync = true\n
