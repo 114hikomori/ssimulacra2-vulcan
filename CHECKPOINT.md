@@ -420,3 +420,27 @@ list owns the ids.
   tightened to strict asserts on ALL devices.
 - Next: push fix commit (awaits authorization); on green CI, tighten gates +
   mark F4 CLOSED in BUG_HUNT.md.
+
+## 2026-09-08 — F4 hypothesis #2 REFUTED by run #14; contraction site removed via f64 island
+
+- Done: Run #14 (f64 product barrier) left llvmpipe probe output BIT-IDENTICAL
+  to #13 (same 8695/4201/606 counts, same magnitudes) - products ruled out
+  (verified the new .spv really ran: OpFConvert/OpFMul %double present, hash
+  changed, fresh CI build). Symmetry argument (delta==d1==d2 forced in case C)
+  leaves exactly one asymmetric site: delta+delta strength-reduces to 2*delta
+  and contracts into fma(2,delta,kC2) in num_s only, while denom_s stays plain
+  adds - and llvmpipe's fma is inaccurate at large exponent spread, which also
+  explains why probe A (moderate delta) is clean while C diverges on ~71% of
+  m values (the share where its product rounding makes delta nonzero). Fix:
+  num_s = float(double(delta)+double(delta)) + kC2 - exact doubling in f64,
+  lone f32 add, same tree shape as denom_s; SPIR-V verified to contain no
+  OpFMul in the num_s path. Products keep their f64 barrier (provably correct
+  rounding on any device, value-neutral; comment corrected to stop claiming
+  they were the F4 cause). Verified locally: probe 5/5 bit-exact, suite 18/18,
+  RDNA2 parity unchanged, clippy -D warnings clean.
+- Deviated from plan: none.
+- Blocked / open question: llvmpipe confirmation pending - if C/D go 0-diverge
+  and identity returns exactly 100.0, F4 closes; if not, next step is the
+  per-pixel intermediate dump (mu12/delta/num_s/denom_s/prod/q columns), no
+  more expression-level guessing.
+- Next: push fix commit (awaits authorization).
