@@ -11,13 +11,16 @@ fn max_abs(a: &[f64], b: &[f64]) -> f64 {
 
 fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     // ulp-level bars only on IEEE-fma devices; others get sanity bars that
-    // still catch algorithmic errors (those diverge >=1e-2; llvmpipe measured
-    // norms 3.4e-5 on CI run #2). Identity is driver-independent (symmetric
-    // computation) and stays exact everywhere.
+    // still catch algorithmic errors. CI run #3 measured llvmpipe: norms
+    // <=3.9e-5, weighted 1.2e-3, score 3.3e-3 (driver fma noise amplified by
+    // the 225-weight terms) - so non-IEEE score/weighted bars are 1e-2, which
+    // still catches every realistic bug class (structural/constant errors
+    // diverge >=1e-1; the asymmetric-alpha dispatch bug was 10.9). Identity
+    // is driver-independent (symmetric computation) and stays exact everywhere.
     let (norm_bar, score_bar, w_bar) = if ctx.fma_ieee() {
         (1e-6, 1e-5, 1e-6)
     } else {
-        (1e-3, 1e-3, 1e-3)
+        (1e-3, 1e-2, 1e-2)
     };
     let p = |name: &str| -> Dump {
         Dump::read(format!(

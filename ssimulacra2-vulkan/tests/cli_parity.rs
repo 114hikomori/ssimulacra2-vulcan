@@ -26,12 +26,12 @@ fn cli_gpu_and_cpu_match_goldens() {
     let gpu_bar = match ssimulacra2_vulkan::context::VkContext::new() {
         Ok(ctx) => {
             if ctx.fma_ieee() {
-                1e-5
-            } else {
-                1e-3
-            }
-        }
-        Err(_) => 1e-3,
+                        1e-5
+                    } else {
+                        1e-2
+                    }
+                }
+                Err(_) => 1e-2,
     };
     for (pair, want) in GOLDEN {
         let f = |mode: &str, extra: &[&str]| {
@@ -91,10 +91,10 @@ fn cli_asymmetric_alpha_dispatch_matches_oracle() {
                         if ctx.fma_ieee() {
                             1e-5
                         } else {
-                            1e-3
+                            1e-2
                         }
                     }
-                    Err(_) => 1e-3,
+                    Err(_) => 1e-2,
                 }
             };
             assert!((g - want).abs() <= bar, "{a} vs {b} ({extra:?}): {g} vs oracle {want}");
