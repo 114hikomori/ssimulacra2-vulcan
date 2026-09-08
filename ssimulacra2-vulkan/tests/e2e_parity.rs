@@ -24,9 +24,9 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     // amplifies driver fma noise ~1100x through the division - score-level
     // assertions are meaningless there and are printed, not asserted).
     // Structural bugs still get caught on any device: norms 1e-3, weighted
-    // 5e-2. Identity exactness holds on IEEE-fma devices; on llvmpipe it is
-    // an OPEN ANOMALY (99.984, see CHECKPOINT 2026-09-08 run #5 and
-    // BUG_HUNT.md F4) - identity is NOT driver-independent as once claimed.
+    // 5e-2. Identity exactness is driver-independent since the F4 fix
+    // (NoContraction on the maps_combine ssim_d chain, CI run #17: llvmpipe
+    // identity = exactly 100.0, probe 5/5 clean).
     let strict = ctx.fma_ieee();
     let (norm_bar, w_bar) = if strict { (1e-6, 1e-6) } else { (1e-3, 5e-2) };
     let p = |name: &str| -> Dump {
@@ -52,12 +52,10 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
     let want = p("score_final_s0").f64_data[0];
     let wd = (weighted_sum(&scales) - p("score_weighted_s0").f64_data[0]).abs();
     println!("{fixture} r{run}: weighted drift {wd:e}, score {got:.8} vs {want:.8} (drift {:e})", (got - want).abs());
-    // Identity exactness: asserted on IEEE-fma devices. On llvmpipe it is an
-    // OPEN anomaly (99.98426951, runs #5/#8/#9 - bit-identical across runs,
-    // unaffected by the num_s expression change in #9, so NOT fma contraction
-    // in num_s/denom_s; stage-comparison experiment in determinism.rs will
-    // localize). Printed as NOTE elsewhere, never hidden.
-    if expect_exact_100 && strict {
+    // Identity exactness: asserted on EVERY device since the F4 fix (run #17
+    // closed the llvmpipe anomaly: 20718/36864 nonzero d -> 0, 99.984 ->
+    // exactly 100.0). History in CHECKPOINT 2026-09-08 and BUG_HUNT.md F4.
+    if expect_exact_100 {
         assert_eq!(got, 100.0, "identity must be exactly 100");
         assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
     }

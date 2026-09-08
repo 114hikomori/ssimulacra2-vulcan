@@ -1,13 +1,13 @@
 #![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
-// F4 (BUG_HUNT): localize the llvmpipe identity anomaly. The algebra says
-// identical inputs through identical kernels must produce bit-identical
-// outputs (=> d == 0 => score exactly 100); the anomaly proves otherwise.
-// Run #9 showed the num_s expression change had ZERO effect (drift values
-// bit-identical to run #8), so the divergence is NOT fma contraction in
-// num_s/denom_s. This file's second test walks the actual identity pipeline
-// stage by stage and reports the first pair that differs.
-// On IEEE-fma devices everything is asserted; on non-IEEE devices results are
-// printed for localization without failing.
+// F4 (BUG_HUNT) - CLOSED 2026-09-08 by CI run #17. History: llvmpipe gave
+// identity ssim_d != 0 (20718/36864, d ~ 2^-24) although everything upstream
+// was bit-equal; probes #13-#15 ruled out the products and tree shape, and
+// the culprit was NIR's inexact algebra lowering num_s's delta+delta (one SSA
+// value, x+x -> 2*x -> fma pattern) differently from denom_s's d1+d2 (two SSA
+// values, plain adds) through llvmpipe's non-IEEE fma. Fix: NoContraction
+// (precise) on every ssim_d-chain result in maps_combine.comp - verified here
+// on ALL devices by the two unconditional asserts at the end of each test
+// (determinism always held; the identity path is exact since the fix).
 use ssimulacra2_vulkan::blur::{blur_planes, create_recursive_gaussian};
 use ssimulacra2_vulkan::context::{GpuBuffer, VkContext};
 use ssimulacra2_vulkan::oracle_dump::Dump;
@@ -33,7 +33,6 @@ fn gpu_mul(ctx: &VkContext, a: &GpuBuffer, b: &GpuBuffer, n: usize) -> GpuBuffer
 #[test]
 fn kernel_dispatch_determinism() {
     let ctx = VkContext::new().expect("vulkan context");
-    let strict = ctx.fma_ieee();
     let lin = Dump::read(format!(
         "{}/../dumps/photo/run1/r0_linear_orig_s0.bin",
         env!("CARGO_MANIFEST_DIR")
@@ -77,11 +76,9 @@ fn kernel_dispatch_determinism() {
     for b in [b1, b2, x1, x2, u1, u2, m1, m2, m3] {
         ctx.destroy_buffer(b);
     }
-    if strict {
-        assert!(culprit.is_none(), "IEEE device kernels nondeterministic: {culprit:?}");
-    } else {
-        println!("non-IEEE device first diverging kernel: {culprit:?} (BUG_HUNT F4 localization)");
-    }
+    // Determinism holds on every driver (llvmpipe never diverged run-to-run;
+    // F4 was a deterministic wrong-value bug, now fixed). Assert everywhere.
+    assert!(culprit.is_none(), "kernels nondeterministic on this device: {culprit:?}");
 }
 
 /// Walk the identity pipeline stage by stage (mirroring gpu_pipeline's scale-0
@@ -89,7 +86,6 @@ fn kernel_dispatch_determinism() {
 #[test]
 fn identity_stage_comparison() {
     let ctx = VkContext::new().expect("vulkan context");
-    let strict = ctx.fma_ieee();
     let lin1 = Dump::read(format!(
         "{}/../dumps/identical/run1/r0_linear_orig_s0.bin",
         env!("CARGO_MANIFEST_DIR")
@@ -162,9 +158,7 @@ fn identity_stage_comparison() {
     for b in [l1, l2, x1, x2, m11, m12, m22, s11, s12, s22, mu1, mu2, sd, ed] {
         ctx.destroy_buffer(b);
     }
-    if strict {
-        assert!(first_diff.is_none(), "IEEE identity stages differ: {first_diff:?}");
-    } else {
-        println!("non-IEEE identity first differing stage: {first_diff:?} (BUG_HUNT F4)");
-    }
+    // F4 CLOSED (run #17): identity stages are bit-equal on EVERY device now
+    // (was IEEE-only assert + print on llvmpipe). Assert unconditionally.
+    assert!(first_diff.is_none(), "identity stages differ on this device: {first_diff:?}");
 }

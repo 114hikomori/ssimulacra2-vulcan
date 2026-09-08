@@ -49,23 +49,16 @@ void main() {
   precise float dm = m1 - m2;
   precise float dmsq = float(double(dm) * double(dm));
   precise float num_m = 1.0 - dmsq;
-  // F4 final hypothesis (human-deadline round, after #13-#15 refuted
-  // products and tree SHAPE as causes): the compiler lowers by SSA PATTERN,
-  // not runtime value - num_s's delta+delta (one SSA used twice) matches the
-  // x+x -> 2*x -> fma(2,delta,kC2) inexact algebraic rule in Mesa's NIR,
-  // while denom_s's d1+d2 (two SSA values) stays plain adds. Runtime-equal
-  // inputs, different instruction streams, llvmpipe's non-IEEE fma in one
-  // stream => d = 7*2^-24 - consistent with ALL probe data including #14
-  // bit-identity (products never fed that fma) and #15 (f64 island got
-  // inexact-folded back to the same pattern; A/B regressed via the new
-  // f64 round-trip asymmetry). Free disasm check: #13-era decorations sat
-  // on the PRODUCT vars only; the add chains NEVER had NoContraction in any
-  // version (current count = 0). Fix: precise on every ssim_d-chain result,
-  // so glslang decorates delta/num_s/denom_s/prod/num_m/d (verified in
-  // disasm) and NIR's inexact rules must not touch those values. This is
-  // the last hypothesis-driven round: C clean on llvmpipe => F4 closes and
-  // identity gates tighten; otherwise F4 is documented-accepted under the
-  // sanity-bar policy and this comment becomes the case file.
+  // F4 CLOSED (2026-09-08, CI run #17): this precise/NoContraction decoration
+  // on every ssim_d-chain result is the fix. Root cause was SSA-pattern, not
+  // runtime-value: num_s's delta+delta (one value twice) matched Mesa NIR's
+  // x+x -> 2*x -> fma inexact algebraic rule while denom_s's d1+d2 (two SSA)
+  // did not, so llvmpipe's non-IEEE fma broke num_s == denom_s for identity
+  // (d ~ 7*2^-24, deterministic - which is why #14 bit-matched and #15's
+  // tree-shape change left C fixed). Decorating BOTH chains forces plain
+  // correctly-rounded f32 throughout. Verified on llvmpipe: probe A-E all
+  // 0-differ, identity exactly 100.0 (was 99.98426951); see BUG_HUNT.md F4.
+  // Do NOT remove the precise keywords without a CI probe run on llvmpipe.
   precise float delta = s12[b] - mu12;
   precise float num_s = delta + delta + kC2;
   precise float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;

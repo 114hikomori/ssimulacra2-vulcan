@@ -75,9 +75,25 @@ have to originate in the combine kernel itself — exactly the unguarded step).
 `e2e_parity` still catches it at the score level (`NaN <= bar` is false). Fix:
 mirror the `is_nan()` guard in the f64 paths.
 
-## F4 (M, known/open) — llvmpipe identity anomaly, with a reduction
+ ## F4 (M) — llvmpipe identity anomaly — **CLOSED 2026-09-08 (CI run #17)**
 
-CHECKPOINT 2026-09-08 (run #5): identity fixture returns 99.98426951 on
+ Resolution: the reduction below was right that only `maps_combine` could
+ diverge, but wrong to exclude "fma contraction in num_s/denom_s" - it
+ reasoned about runtime values, not the compiler's SSA pattern. num_s's
+ `delta+delta` (one value used twice) matches NIR's `x+x -> 2*x -> fma`
+ inexact rule while denom_s's `d1+d2` (two values) does not, so llvmpipe's
+ non-IEEE fma hit only num_s -> num_s != denom_s -> d ~ 7*2^-24 (deterministic
+ throughout, which is why per-dispatch tests never showed it). Root cause
+ confirmed by the synthetic-tree probe (f4_probe.rs, runs #13-#15) and fixed by
+ `precise`/NoContraction on every ssim_d-chain result in maps_combine.comp.
+ Run #17 on llvmpipe: probe A-E all 0/12288 differ, identity ssim_d nonzero
+ 0/36864 (was 20718), identity score exactly 100.0 (was 99.98426951). Gates
+ tightened to assert on every device (e2e, cli, determinism, probe). The
+ historical reduction and localization text below is kept as the case file.
+
+ (was: M, known/open) — with a reduction
+
+ CHECKPOINT 2026-09-08 (run #5): identity fixture returns 99.98426951 on
 llvmpipe (norms 2.5e-7 ≠ 0) while RDNA2 is exactly 100.0.
 
 This review's algebraic reduction: for bitwise-identical `lin1 == lin2`,

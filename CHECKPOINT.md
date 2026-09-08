@@ -494,3 +494,28 @@ list owns the ids.
   BUG_HUNT F4 closed. Otherwise => accept under (b): fold this comment +
   probe results into the sanity-bar gate documentation, no further probes.
 - Next: push #16 commit (awaits authorization), then close F4 per CI verdict.
+
+## 2026-09-08 — F4 CLOSED (run #17 green) + identity gates tightened to all-devices
+
+- Done: Run #17 verdict — the NoContraction fix is confirmed on llvmpipe:
+  probe A-E all 0/12288 differ, identity ssim_d nonzero 0/36864 (was
+  20718), identity weighted drift 0e0, score exactly 100.00000000 (was
+  99.98426951). F4 root cause = SSA-pattern fma contraction (num_s
+  delta+delta -> 2*delta -> fma via NIR inexact algebra, denom_s d1+d2
+  plain; llvmpipe non-IEEE fma), fixed by precise on the ssim_d chain.
+  Tightened every identity gate to assert on ALL devices (was IEEE-fma-only
+  + print): e2e_parity identity == 100 exact (dropped the && strict), 
+  cli_parity identity string == 100.00000000 exact (removed IEEE gate +
+  0.5 sanity bar), determinism both tests assert-first_diff/culprit none on
+  every device, f4_probe now asserts bit-exact-vs-CPU always (promoted from
+  diagnostic to strict regression lock). BUG_HUNT.md F4 -> CLOSED with
+  resolution paragraph; shader comment rewritten to a keep-the-decorations
+  warning. Verified locally: recompiled .spv byte-identical (comment-only ->
+  NonContraction=16/OpFma=0 unchanged), suite 18/18 on RDNA2, clippy
+  -D warnings clean. NOTE: the tightened gates are the real test on CI's
+  llvmpipe next run — run #17 already showed all these pass there.
+- Deviated from plan: none (M2-M9 all met; F4 the last open defect closed).
+- Blocked / open question: none.
+- Next: push this tightening commit (awaits authorization) to confirm the
+  all-device identity gates go green on llvmpipe; then F4 fully done, only
+  Phase H (M10 optimization, deferred) remains.

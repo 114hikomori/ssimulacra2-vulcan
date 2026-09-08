@@ -1,16 +1,15 @@
 #![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
-// F4 probe (human-approved CI round-trip, 2026-09-08): localize the llvmpipe
-// identity anomaly by driving the PRODUCTION maps_combine kernel with
-// synthetic inputs that isolate each expression tree. The kernel's identity
-// algebra: mu1==mu2, s11==s22==s12 => num_s and denom_s are the same value
-// computed by DIFFERENT trees (delta+delta+kC2 vs (s11-mu11)+(s22-mu22)+kC2),
-// so d must be exactly 0 on any spec-compliant device. Each case below
-// exercises one branch of that structure; the CPU expectation mirrors the
-// shader op-for-op in Rust f32 (correctly rounded, never contracted).
-// On IEEE-fma devices every case is asserted bit-exact (harness validation +
-// strict regression). On non-IEEE devices (llvmpipe on CI) results are
-// PRINTED, not asserted - the printed per-case divergence pattern is the
-// probe's answer: which tree diverges, at which value regime.
+// F4 regression lock (root cause CLOSED by the NoContraction fix, CI run #17).
+// This drives the PRODUCTION maps_combine kernel with synthetic inputs that
+// isolate each expression tree and compares ssim_d bit-for-bit against a CPU
+// mirror of the shader's f32 ops (Rust never contracts). Before the fix, only
+// the same-device-tree cases (A: mu=0, B: sigma=0) matched on llvmpipe while
+// C/D/E diverged; run #17 made all five cases bit-exact on llvmpipe, so the
+// probe now ASSERTS on every device - it is a strict regression gate, not a
+// diagnostic. The historical per-case printout remains for CI-log visibility.
+// Tree isolation: num_s = delta+delta+kC2 (one SSA twice -> was the fma
+// contraction bait vs denom_s = d1+d2+kC2, two SSA); the fix's precise
+// decorations make both chains plain, correctly-rounded f32 on any driver.
 use ssimulacra2_vulkan::context::VkContext;
 
 const K_C2: f32 = 0.0009;
@@ -51,7 +50,7 @@ fn lcg(state: &mut u32) -> f32 {
     ((*state >> 8) as f32) / ((1u32 << 24) as f32)
 }
 
-fn run_case(ctx: &VkContext, name: &str, inp: &Inputs, strict: bool) {
+fn run_case(ctx: &VkContext, name: &str, inp: &Inputs) {
     let zero = vec![0.0f32; 3 * N];
     let mk = |v: &[f32]| ctx.create_buffer_f32(v).unwrap();
     let x1 = mk(&zero);
@@ -105,9 +104,7 @@ fn run_case(ctx: &VkContext, name: &str, inp: &Inputs, strict: bool) {
         3 * N,
         if first != usize::MAX { format!(", first at {first}") } else { String::new() }
     );
-    if strict {
-        assert_eq!(n_diff, 0, "F4 probe {name} must be bit-exact on IEEE-fma device");
-    }
+    assert_eq!(n_diff, 0, "F4 probe {name} must be bit-exact vs CPU on every device");
     for b in [x1, x2, b_mu1, b_mu2, b_s11, b_s22, b_s12, sd, ed] {
         ctx.destroy_buffer(b);
     }
@@ -116,7 +113,6 @@ fn run_case(ctx: &VkContext, name: &str, inp: &Inputs, strict: bool) {
 #[test]
 fn maps_combine_synthetic_bisection() {
     let ctx = VkContext::new().expect("vulkan context");
-    let strict = ctx.fma_ieee();
 
     // A: mu=0, s11==s22==s12=s -> isolates num_s vs denom_s trees (delta=s).
     let mut a = Inputs::zeros();
@@ -126,7 +122,7 @@ fn maps_combine_synthetic_bisection() {
         a.s22[i] = s;
         a.s12[i] = s;
     }
-    run_case(&ctx, "A_mu0_sigvar", &a, strict);
+    run_case(&ctx, "A_mu0_sigvar", &a);
 
     // B: s=0, mu1==mu2=m -> delta = -m^2, both trees carry the same -2m^2+kC2.
     let mut b = Inputs::zeros();
@@ -135,7 +131,7 @@ fn maps_combine_synthetic_bisection() {
         b.mu1[i] = m;
         b.mu2[i] = m;
     }
-    run_case(&ctx, "B_sig0_muvar", &b, strict);
+    run_case(&ctx, "B_sig0_muvar", &b);
 
     // C: delta=0 exactly (s12=mu12, s11=mu11, s22=mu22) -> num_s=kC2 literal
     // vs denom_s=(0)+(0)+kC2: tests whether the trees agree at the constant.
@@ -149,7 +145,7 @@ fn maps_combine_synthetic_bisection() {
         c.s22[i] = mm;
         c.s12[i] = mm;
     }
-    run_case(&ctx, "C_delta0", &c, strict);
+    run_case(&ctx, "C_delta0", &c);
 
     // D: realistic identity regime (m from XYB-like range, s = m^2 + var) -
     // closest synthetic analogue of the failing photo/identical fixture.
@@ -165,7 +161,7 @@ fn maps_combine_synthetic_bisection() {
         d.s22[i] = s;
         d.s12[i] = s;
     }
-    run_case(&ctx, "D_realistic_identity", &d, strict);
+    run_case(&ctx, "D_realistic_identity", &d);
 
     // E: non-identity (dm != 0, independent sigmas) - general path GPU vs CPU.
     let mut e = Inputs::zeros();
@@ -179,5 +175,5 @@ fn maps_combine_synthetic_bisection() {
         e.s22[i] = m2 * m2 + 1e-5 + lcg(&mut st) * 1e-2;
         e.s12[i] = m1 * m2 + 1e-5 + lcg(&mut st) * 1e-2;
     }
-    run_case(&ctx, "E_nonidentity", &e, strict);
+    run_case(&ctx, "E_nonidentity", &e);
 }
