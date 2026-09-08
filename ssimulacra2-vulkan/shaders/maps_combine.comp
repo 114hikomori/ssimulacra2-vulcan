@@ -46,25 +46,32 @@ void main() {
   float mu11 = float(double(m1) * double(m1));
   float mu22 = float(double(m2) * double(m2));
   float mu12 = float(double(m1) * double(m2));
-  float dm = m1 - m2;
-  float dmsq = float(double(dm) * double(dm));
-  float num_m = 1.0 - dmsq;
-  // F4 status (runs #13-#15, three expression-level interventions, all
-  // refuted): C's divergence (8695/12288, d=7*2^-24) is BIT-INVARIANT to the
-  // product path (run #14: f64 product barrier changed nothing) AND the
-  // num_s tree shape (run #15: doing the doubling in exact f64 regressed
-  // probe A/B from clean to 1-ulp divergent while leaving C untouched -
-  // reverted). The identity fixture's 20718/36864 is likewise unchanged across
-  // all three. Expression-level guessing is exhausted; the next diagnostic is
-  // a per-pixel intermediate dump (mu12/delta/num_s/denom_s/prod/q columns)
-  // on llvmpipe, which needs a human-approved CI round-trip. Until then this
-  // is the known-best form: plain adds, symmetric trees.
-  float delta = s12[b] - mu12;
-  float num_s = delta + delta + kC2;
-  float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
-  float prod = num_m * num_s;
+  precise float dm = m1 - m2;
+  precise float dmsq = float(double(dm) * double(dm));
+  precise float num_m = 1.0 - dmsq;
+  // F4 final hypothesis (human-deadline round, after #13-#15 refuted
+  // products and tree SHAPE as causes): the compiler lowers by SSA PATTERN,
+  // not runtime value - num_s's delta+delta (one SSA used twice) matches the
+  // x+x -> 2*x -> fma(2,delta,kC2) inexact algebraic rule in Mesa's NIR,
+  // while denom_s's d1+d2 (two SSA values) stays plain adds. Runtime-equal
+  // inputs, different instruction streams, llvmpipe's non-IEEE fma in one
+  // stream => d = 7*2^-24 - consistent with ALL probe data including #14
+  // bit-identity (products never fed that fma) and #15 (f64 island got
+  // inexact-folded back to the same pattern; A/B regressed via the new
+  // f64 round-trip asymmetry). Free disasm check: #13-era decorations sat
+  // on the PRODUCT vars only; the add chains NEVER had NoContraction in any
+  // version (current count = 0). Fix: precise on every ssim_d-chain result,
+  // so glslang decorates delta/num_s/denom_s/prod/num_m/d (verified in
+  // disasm) and NIR's inexact rules must not touch those values. This is
+  // the last hypothesis-driven round: C clean on llvmpipe => F4 closes and
+  // identity gates tighten; otherwise F4 is documented-accepted under the
+  // sanity-bar policy and this comment becomes the case file.
+  precise float delta = s12[b] - mu12;
+  precise float num_s = delta + delta + kC2;
+  precise float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
+  precise float prod = num_m * num_s;
   float q = float(double(prod) / double(denom_s));
-  float d = 1.0 - q;
+  precise float d = 1.0 - q;
   ssimd[b] = max(d, 0.0);
 
   float t1 = abs(img1[b] - m1);

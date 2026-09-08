@@ -469,3 +469,28 @@ list owns the ids.
   on Phase H instead.
 - Next: awaiting human decision (a) or (b); revert commit awaits push
   authorization either way (restores the better llvmpipe diagnostic state).
+
+## 2026-09-08 — F4 round #16: SSA-pattern hypothesis (human-supplied), NoContraction on the add chains
+
+- Done: Human review pierced the algebraic wall: it only rules out runtime
+  wrong-single-op models, NOT compiler lowering asymmetry - num_s's
+  delta+delta (one SSA twice) matches x+x -> 2*x -> fma inexact algebraic
+  rules (Mesa NIR; documented class incl. dropped-NoContraction bugs) while
+  denom_s's d1+d2 (distinct SSA) stays plain adds; deterministic, runtime-
+  equal, still can differ. Consistent with ALL of #13-#15 incl. #14 bit-
+  identity (products never fed that fma) and #15 C-stasis (island folded
+  back to the same pattern). Free disasm check CONFIRMED the gap: current
+  .spv has 0 NoContraction; #13-era had 6 but ONLY on product vars - the
+  add chains were never protected in any version. Fix #16: precise on every
+  ssim_d-chain result (dm/dmsq/num_m/delta/num_s/denom_s/prod/d) -> 16
+  decorations verified in disasm, OpFma 0; products keep the f64 barrier.
+  RDNA2 verified: probe 5/5 bit-exact, suite 18/18, clippy -D warnings
+  clean. AUTH for 2a0be68 push: human's words "push 2a0be68 ก่อน (...) ต้อง
+  เป็นคุณ" - pushed, restoring the A/B-clean baseline on llvmpipe.
+  DEADLINE (human-set): this is the LAST hypothesis-driven round.
+- Deviated from plan: none.
+- Blocked / open question: CI decides. C 0-diverge + identity 100.0 on
+  llvmpipe => F4 CLOSED, tighten identity gates to strict-all-devices, mark
+  BUG_HUNT F4 closed. Otherwise => accept under (b): fold this comment +
+  probe results into the sanity-bar gate documentation, no further probes.
+- Next: push #16 commit (awaits authorization), then close F4 per CI verdict.
