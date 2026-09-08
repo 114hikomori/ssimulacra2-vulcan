@@ -628,3 +628,34 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: H1 (readback fix: persistent staging + single memcpy + fused sd+ed).
   Pushes of e72516d/3922ed3/H0 commits await authorization.
+
+## 2026-09-08 — H1 DONE: readback 742->96 ms (cached whole-allocation staging)
+
+- Done: readback_f32_all replaces per-call alloc+Vec<u8>+byte-loop+destroy with
+  a grow-only cached staging, ONE submit for sd+ed, one f32-word memcpy.
+  First COHERENT+persistent variant only cut 742->654 -> surprise: the cost was
+  NOT alloc churn but CPU reads from write-combined memory (~200 MB/s).
+  Switched to HOST_CACHED (COHERENT fallback kept) + invalidate. TWO VUID
+  violations caught by validation layer + cli_parity BEFORE commit:
+  size-01390 (partial invalidate not atom-multiple) then size-01389
+  (WHOLE_SIZE invalidate with partial mapping) - fixed by mapping the WHOLE
+  cached allocation and invalidating WHOLE_SIZE (mapping end = memory end).
+  odd/s9 non-power-of-two fixtures were the detectors; powers-of-two cannot
+  catch it - a real test-coverage insight for the record. TWINS: searched
+  map/invalidate sites - only the fixed one touches CACHED; upload path stays
+  COHERENT (legal, ~47 ms, revisit only if profile says).
+  Verified: 18/18 suite + clippy -D warnings clean on RDNA2; all 12 fixture
+  scores BYTE-IDENTICAL pre-H1 vs post-H1 (pre-existing 1-ulp photo/s9/etc
+  deltas are the documented f64 quotient double-rounding, within bars).
+  Same-batch MIN-of-5: big 1.905 -> 1.231 s (oracle 0.715 this batch; M10 still
+  ~1.7x away), photo 0.397 -> 0.378 (oracle 0.030 - photo is context-init+
+  dispatch-dominated: H2's target). Post-H1 big profile: prep 373 > blur 233 >
+  context-init 169 > readback 96.
+- Deviated from plan: readback fix took the HOST_CACHED route (plan text said
+  persistent+memcpy); data redirected mid-step as designed. M10 re-check after
+  H1: NOT met (1.231 vs 0.715) -> proceed H2.
+- Blocked / open question: llvmpipe CI run still needed for the CACHED-staging
+  path (local only saw AMD; fallback + CI validation are the safety nets).
+- Next: H2 (pipeline/descriptor/shader-module cache + real VkPipelineCache,
+  then submit fusion with explicit barriers + validate_sync gate); CI push of
+  H0+H1 bundle awaits authorization.

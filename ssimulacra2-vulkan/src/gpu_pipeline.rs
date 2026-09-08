@@ -133,8 +133,9 @@ pub fn compute_ssimulacra2_gpu_profiled(
                 &(n as u32).to_le_bytes(),
             )
         })?;
-        let sd_r = prof.time("readback", || ctx.readback_f32(&sd))?;
-        let ed_r = prof.time("readback", || ctx.readback_f32(&ed))?;
+        let mut both = prof.time("readback", || ctx.readback_f32_all(&[&sd, &ed]))?;
+        let ed_r = both.pop().unwrap_or_default();
+        let sd_r = both.pop().unwrap_or_default();
         let sn = prof.time("norms", || {
             let sdv: Vec<&[f32]> = (0..3).map(|c| &sd_r[c * n..(c + 1) * n]).collect();
             let edv: Vec<&[f32]> = (0..3).map(|c| &ed_r[c * n..(c + 1) * n]).collect();

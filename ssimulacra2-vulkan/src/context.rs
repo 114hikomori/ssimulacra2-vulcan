@@ -37,6 +37,7 @@ pub struct VkContext {
     fma_ieee: bool,
     max_groups_x: u32,
     validation: bool,
+    staging: std::sync::Mutex<Option<GpuBuffer>>,
 }
 
 fn cstr(s: &'static [u8]) -> &'static CStr {
@@ -147,6 +148,7 @@ impl VkContext {
             fma_ieee: false,
             max_groups_x,
             validation,
+            staging: Default::default(),
         }
         .with_probe()
         )
@@ -288,35 +290,115 @@ impl VkContext {
     }
 
     pub fn readback_f32(&self, buf: &GpuBuffer) -> Result<Vec<f32>, String> {
-        let bytes = buf.size;
-        unsafe {
-            let staging = self.alloc_buffer(
-                bytes,
-                vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
-            // F8 (BUG_HUNT): staging must be freed on every path.
-            let read = (|| -> Result<Vec<f32>, String> {
-                self.one_shot(|cb| {
-                    let reg = vk::BufferCopy::default().size(bytes);
-                    self.device.cmd_copy_buffer(cb, buf.buffer, staging.buffer, &[reg]);
-                })?;
+        Ok(self.readback_f32_all(&[buf])?.pop().unwrap_or_default())
+    }
+
+    /// H1 (Phase H): read several device buffers with ONE staging allocation
+    /// (grow-only, cached in self.staging), ONE submit+fence, and ONE
+    /// mapped-memory pass. Values are byte-identical to per-buffer
+    /// readbacks; only the host-side copying went away (the H0 profile:
+    /// fresh 100 MB HOST_COHERENT staging + Vec<u8> copy + zero-init Vec<f32>
+    /// + byte loop per call was ~40% of big-image wall time).
+    pub fn readback_f32_all(&self, bufs: &[&GpuBuffer]) -> Result<Vec<Vec<f32>>, String> {
+        let total: vk::DeviceSize = bufs.iter().map(|b| b.size).sum();
+        let mut guard = self
+            .staging
+            .lock()
+            .map_err(|_| "staging lock poisoned".to_string())?;
+        let small = guard.as_ref().is_some_and(|s| s.size < total);
+        if small || guard.is_none() {
+            if let Some(s) = guard.take() {
+                unsafe {
+                    self.device.destroy_buffer(s.buffer, None);
+                    self.device.free_memory(s.memory, None);
+                }
+            }
+            *guard = Some(unsafe {
+                // H1 experiment: cached host-visible staging instead of
+                // COHERENT (write-combined reads were measuring ~200 MB/s);
+                // correctness then REQUIRES invalidate before any CPU read,
+                // done below and enforced by the validation layer.
+                self.alloc_buffer(
+                    total,
+                    vk::BufferUsageFlags::TRANSFER_DST,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_CACHED,
+                )
+                .or_else(|_| {
+                    self.alloc_buffer(
+                        total,
+                        vk::BufferUsageFlags::TRANSFER_DST,
+                        vk::MemoryPropertyFlags::HOST_VISIBLE
+                            | vk::MemoryPropertyFlags::HOST_COHERENT,
+                    )
+                })?
+            });
+        }
+        let staging = guard.as_ref().unwrap();
+        let outs = unsafe {
+            let sbuf = staging.buffer;
+            let copy = |cb: vk::CommandBuffer| {
+                let mut off = 0u64;
+                for b in bufs {
+                    let reg = vk::BufferCopy::default().dst_offset(off).size(b.size);
+                    self.device.cmd_copy_buffer(cb, b.buffer, sbuf, &[reg]);
+                    off += b.size;
+                }
+            };
+            (|| -> Result<Vec<Vec<f32>>, String> {
+                self.one_shot(copy)?;
+                // Map the WHOLE cached allocation: a partial mapping whose end
+                // is neither nonCoherentAtomSize-aligned (128 on AMD) nor the
+                // memory end violates VUID-VkMappedMemoryRange-size-01389/01390
+                // when this call's `total` is smaller than the grow-only cache
+                // (validation caught it on the odd/s9 fixtures; reading only
+                // the first `total` bytes is unaffected).
                 let ptr = self
                     .device
-                    .map_memory(staging.memory, 0, bytes, vk::MemoryMapFlags::empty())
-                    .map_err(|e| format!("map: {e:?}"))?;
-                let out = std::slice::from_raw_parts(ptr as *const u8, bytes as usize).to_vec();
+                    .map_memory(staging.memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
+                    .map_err(|e| format!("map: {e:?}"))? as *const u8;
+                // All paths below must unmap before returning (F8-style: the
+                // map is a resource). The body computes the result, then we
+                // unmap unconditionally and surface any error afterwards.
+                let body = (|| -> Result<Vec<Vec<f32>>, String> {
+                    // Mandatory for HOST_CACHED (non-coherent) staging before
+                    // any CPU read; harmless no-op for the COHERENT fallback.
+                    // WholeSize (not the copy length): the cached allocation is
+                    // grow-only and may be larger than this readback's bytes,
+                    // and per VUID-VkMappedMemoryRange-size-01390 a partial
+                    // range must be atom-multiple or exactly the allocation -
+                    // non-power-of-two fixtures caught the violation with
+                    // stale-cache bit errors within tolerance. Never truncate.
+                    let range = vk::MappedMemoryRange::default()
+                        .memory(staging.memory)
+                        .offset(0)
+                        .size(vk::WHOLE_SIZE);
+                    self.device
+                        .invalidate_mapped_memory_ranges(&[range])
+                        .map_err(|e| format!("invalidate: {e:?}"))?;
+                    let mut out = Vec::with_capacity(bufs.len());
+                    let mut off = 0u64;
+                    for b in bufs {
+                        let n = (b.size / 4) as usize;
+                        let mut v: Vec<f32> = Vec::with_capacity(n);
+                        // aligned f32-word copy; staging map is >=64-byte
+                        // aligned and every offset is a multiple of 4 bytes.
+                        std::ptr::copy_nonoverlapping(
+                            ptr.offset(off as isize) as *const f32,
+                            v.as_mut_ptr(),
+                            n,
+                        );
+                        v.set_len(n);
+                        out.push(v);
+                        off += b.size;
+                    }
+                    Ok(out)
+                })();
                 self.device.unmap_memory(staging.memory);
-                let mut v = vec![0f32; out.len() / 4];
-                for (dst, src) in v.iter_mut().zip(out.chunks_exact(4)) {
-                    *dst = f32::from_le_bytes(src.try_into().unwrap());
-                }
-                Ok(v)
-            })();
-            self.device.destroy_buffer(staging.buffer, None);
-            self.device.free_memory(staging.memory, None);
-            read
-        }
+                let out = body?;
+                Ok(out)
+            })()
+        }?;
+        Ok(outs)
     }
 
     /// One-shot submit of a recorded command buffer; waits on its fence.
@@ -386,6 +468,12 @@ impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device.device_wait_idle();
+            if let Ok(mut g) = self.staging.lock() {
+                if let Some(s) = g.take() {
+                    self.device.destroy_buffer(s.buffer, None);
+                    self.device.free_memory(s.memory, None);
+                }
+            }
             self.device.destroy_command_pool(self.cmd_pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
