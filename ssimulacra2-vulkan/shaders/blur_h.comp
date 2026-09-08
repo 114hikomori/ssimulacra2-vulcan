@@ -67,9 +67,8 @@ void main() {
     for (int k = 0; k < 3; ++k) {
       for (int l = 0; l < 4; ++l) {
         float o = sums[0] * rg[48 + 4 * k + l];
-        for (int j = 1; j < 4; ++j) {
-          float cf = (l >= j) ? rg[48 + 4 * k + l - j] : 0.0;
-          o = fma(cf, sums[j], o);
+        for (int j = 1; j <= l; ++j) {
+          o = fma(rg[48 + 4 * k + l - j], sums[j], o);
         }
         o = fma(rg[36 + 4 * k + l], y2[k], o);
         o = fma(rg[24 + 4 * k + l], y1[k], o);

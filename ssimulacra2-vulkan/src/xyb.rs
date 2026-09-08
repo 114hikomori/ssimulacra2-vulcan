@@ -27,10 +27,14 @@ pub fn opsin_bias() -> [f32; 3] {
     [KB0, KB0, KB0]
 }
 
-/// -cbrtf(bias) as computed by the oracle (enc_xyb.cc:221). Both sides call
-/// the same UCRT cbrtf, so this is bit-equal by construction.
+/// -cbrtf(bias) as computed by the oracle (enc_xyb.cc:221). NOTE: Rust's
+/// f32::cbrt routes to UCRT libm which is 1 ulp off the oracle's mingw cbrtf
+/// for this value (observed 2026-09-08: 0xbe1fb276 vs 0xbe1fb275, shifting 43%
+/// of XYB pixels). Compute via f64 (correctly rounded) instead; the
+/// xyb_parity test asserts bit-exactness against the oracle dump.
 pub fn neg_bias_cbrt() -> [f32; 3] {
-    [KB0.cbrt(), KB0.cbrt(), KB0.cbrt()].map(|v| -v)
+    let v = -((KB0 as f64).cbrt() as f32);
+    [v, v, v]
 }
 
 #[repr(C)]

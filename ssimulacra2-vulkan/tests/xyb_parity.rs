@@ -23,13 +23,14 @@ fn check_pair(ctx: &VkContext, fixture: &str, which: &str) {
         let got = ctx.readback_f32(&out).expect("readback");
         ctx.destroy_buffer(out);
         let (d, i) = max_abs_diff(&got, &golden.f32_data);
-        assert!(
-            d <= 1e-6,
-            "{fixture}/{which} positive={positive}: max abs {d:e} at {i} (got {} want {})",
+        assert_eq!(
+            d,
+            0.0,
+            "{fixture}/{which} positive={positive}: NOT bit-exact: max abs {d:e} at {i} (got {} want {})",
             got[i],
             golden.f32_data[i]
         );
-        println!("{fixture}/{which} positive={positive}: max abs {d:e}");
+        println!("{fixture}/{which} positive={positive}: bit-exact");
     }
     ctx.destroy_buffer(buf);
 }

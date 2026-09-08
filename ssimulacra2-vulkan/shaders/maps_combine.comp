@@ -1,0 +1,49 @@
+#version 450
+// Per-pixel error maps at one scale, from the 5 blurred images + XYB inputs.
+// ssim_d: SSIMMap f32 semantics (ssimulacra2.cc:126-152) - products rounded to
+// f32 exactly as the CPU does (float mu11/mu22/mu12), quotient in f32, d>=0.
+// edge_d1: EdgeDiffMap ratio (ssimulacra2.cc:173-175) computed in f32 instead
+// of the CPU's double - documented deviation, budgeted <=2e-6, measured in
+// tests/maps_parity.rs.
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PC { uint n; };
+
+layout(set = 0, binding = 0) readonly buffer Img1 { float img1[]; };
+layout(set = 0, binding = 1) readonly buffer Img2 { float img2[]; };
+layout(set = 0, binding = 2) readonly buffer Mu1 { float mu1[]; };
+layout(set = 0, binding = 3) readonly buffer Mu2 { float mu2[]; };
+layout(set = 0, binding = 4) readonly buffer S11 { float s11[]; };
+layout(set = 0, binding = 5) readonly buffer S22 { float s22[]; };
+layout(set = 0, binding = 6) readonly buffer S12 { float s12[]; };
+layout(set = 0, binding = 7) writeonly buffer SsimD { float ssimd[]; };
+layout(set = 0, binding = 8) writeonly buffer EdgeD1 { float edged[]; };
+
+const float kC2 = 0.0009;
+
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= 3u * n) { return; }
+  uint c = i / n;
+  uint p = i % n;
+  uint b = c * n + p;
+
+  float m1 = mu1[b];
+  float m2 = mu2[b];
+  // `precise` blocks mul/sub contraction: the CPU rounds mu11/mu22/mu12/dm^2
+  // to f32 as separate values (ssimulacra2.cc:129-131) before subtracting.
+  precise float mu11 = m1 * m1;
+  precise float mu22 = m2 * m2;
+  precise float mu12 = m1 * m2;
+  precise float dm = m1 - m2;
+  precise float dmsq = dm * dm;
+  precise float num_m = 1.0 - dmsq;
+  float num_s = 2.0 * (s12[b] - mu12) + kC2;
+  float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
+  float d = 1.0 - num_m * num_s / denom_s;
+  ssimd[b] = max(d, 0.0);
+
+  float t1 = abs(img1[b] - m1);
+  float t2 = abs(img2[b] - m2);
+  edged[b] = (1.0 + t2) / (1.0 + t1) - 1.0;
+}

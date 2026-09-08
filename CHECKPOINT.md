@@ -124,3 +124,25 @@ list owns the ids.
 - Next: Phase E — maps_combine.comp (ssim d f32-semantics + edge d1 f32) + fused multiply
   inputs; single-scale norms (CPU f64, source accumulation order) vs dumps ≤1e-6; measure the
   documented double→float edge deviation; range audit (no denormals in real data, FTZ-safe).
+
+## 2026-09-08 — M4 ✅ (Phase E complete; XYB+blur now BIT-EXACT)
+
+- Done: maps_combine.comp + maps.rs (f64 norms, source accumulation order). Single-scale
+  norms vs dumps: ssim ≤9.1e-9, edge ≤1.9e-8 (bar 1e-6). All 5 blurred planes bit-exact vs
+  dumps. Range audit: min positive 8.2e-2 — FTZ-safe confirmed on real data. Full suite
+  green (7 tests). Two root-cause fixes found by chasing d-map drift (7.1e-4 → 0):
+  (1) GLSL/driver mul+sub contraction (ACO folds fma(a,b,0)→mul then re-fuses): fixed with
+  `precise` on mu11/mu22/mu12/dm/dmsq/num_m (maps) and X*14+0.42 (xyb) — CPU rounds products
+  to f32 separately. (2) Rust f32::cbrt (UCRT libm) is 1 ulp off oracle's mingw cbrtf for
+  kB0 (0xbe1fb276 vs 0xbe1fb275) — shifted 43% of XYB pixels; fixed via f64 cbrt→f32 cast.
+  xyb_parity TIGHTENED to bit-exact assert (16/16 pass). blur group-loop zero-coefficient
+  fma steps skipped (driver drift source; value-identical on strictly-positive data, guarded
+  by range audit) → GPU blur bit-exact vs dumps.
+- Deviated from plan: d-map per-pixel bar (2e-6) retained but actual drift now ~0 for ssim;
+  edge retains documented double→float (~1e-8 at norms). The 1e-6 XYB bar superseded by
+  bit-exactness (stronger).
+- Blocked / open question: none. WATCH for Phase F: Rust f64 pow (score polynomial) vs
+  mingw pow — same libm-divergence class; score dumps will catch it.
+- Next: Phase F — downsample_box2.comp (clamp-replicate, /4, exact order) + per-scale loop
+  (GPU XYB recompute, break rule, weight-index shift) + score.rs (108 weights codegen from
+  source + checksum vs dumps) + end-to-end: all fixtures ≤1e-5 score, identity ==100.0.

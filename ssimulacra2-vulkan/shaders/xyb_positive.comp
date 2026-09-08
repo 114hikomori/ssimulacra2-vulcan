@@ -64,9 +64,12 @@ void main() {
   float bb = mixed2;
 
   if (positive != 0u) {
-    // MakePositiveXYB order (ssimulacra2.cc:215-217): B first (pre-shift Y)
+    // MakePositiveXYB order (ssimulacra2.cc:215-217): B first (pre-shift Y).
+    // precise: the CPU does NOT contract X*14+0.42 (verified 1-ulp drift when
+    // fused) - mul and add round separately.
     bb = (bb - y) + 0.55;
-    x = fma(x, 14.0, 0.42);
+    precise float xp = x * 14.0 + 0.42;
+    x = xp;
     y = y + 0.01;
   }
   xyb[i] = x;
