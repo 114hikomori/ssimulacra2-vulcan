@@ -38,6 +38,37 @@ pub struct VkContext {
     max_groups_x: u32,
     validation: bool,
     staging: std::sync::Mutex<Option<GpuBuffer>>,
+    pub(crate) pipes: std::sync::Mutex<Pipes>,
+}
+
+/// H2.1 (Phase H): per-(shader,bindings,push,entry) reusable Vulkan objects so
+/// a dispatch no longer re-parses the SPIR-V, re-creates layout/pipeline (a
+/// driver compile) and a descriptor pool every single call - the H0/H1 profile
+/// shows ~1 ms of fixed cost per dispatch x ~300 dispatches/image dominates
+/// small images. One real VkPipelineCache (not NULL) additionally accumulates
+/// driver-compiler products across pipelines AND processes: its data is
+/// persisted best-effort next to the OS temp dir (keyed by device name, since
+/// cache blobs are not device-portable), speeding cold starts of CI jobs and
+/// repeated local runs. All handles are destroyed in VkContext::drop before
+/// the device.
+pub(crate) struct Pipes {
+    pub(crate) objs: std::collections::HashMap<
+        (usize, usize, usize, usize),
+        crate::pipeline::PipeObjs,
+    >,
+    pub(crate) cache: vk::PipelineCache,
+    cache_file: std::path::PathBuf,
+}
+
+fn pipeline_cache_path(device_name: &str) -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("S2V_PIPELINE_CACHE") {
+        return std::path::PathBuf::from(p);
+    }
+    let slug: String = device_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    std::env::temp_dir().join(format!("ssimulacra2-vulkan-pipeline-{slug}.cache"))
 }
 
 fn cstr(s: &'static [u8]) -> &'static CStr {
@@ -135,6 +166,21 @@ impl VkContext {
             .max_compute_work_group_count[0]
             .max(1) as u32;
 
+        // H2.1: real pipeline cache, seeded from disk when the bytes parse
+        // (any error just means "cold cache" - spec-required fallback).
+        let cache_file = pipeline_cache_path(&device_name);
+        let initial = std::fs::read(&cache_file).unwrap_or_default();
+        let pcache = unsafe {
+            device.create_pipeline_cache(
+                &vk::PipelineCacheCreateInfo::default().initial_data(&initial),
+                None,
+            )
+        }
+        .or_else(|_| {
+            unsafe { device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None) }
+        })
+        .map_err(|e| format!("pipeline cache: {e:?}"))?;
+
         Ok(Self {
             entry,
             instance,
@@ -149,6 +195,11 @@ impl VkContext {
             max_groups_x,
             validation,
             staging: Default::default(),
+            pipes: std::sync::Mutex::new(Pipes {
+                objs: Default::default(),
+                cache: pcache,
+                cache_file,
+            }),
         }
         .with_probe()
         )
@@ -468,6 +519,21 @@ impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device.device_wait_idle();
+            // H2.1: every cached object + the pipeline cache must die with the
+            // device (validation flags any live object at destroy_device).
+            if let Ok(mut p) = self.pipes.lock() {
+                for (_, o) in p.objs.drain() {
+                    self.device.destroy_descriptor_pool(o.pool, None);
+                    self.device.destroy_pipeline(o.pipe, None);
+                    self.device.destroy_pipeline_layout(o.pl, None);
+                    self.device.destroy_descriptor_set_layout(o.dsl, None);
+                    self.device.destroy_shader_module(o.shm, None);
+                }
+                if let Ok(data) = self.device.get_pipeline_cache_data(p.cache) {
+                    let _ = std::fs::write(&p.cache_file, data);
+                }
+                self.device.destroy_pipeline_cache(p.cache, None);
+            }
             if let Ok(mut g) = self.staging.lock() {
                 if let Some(s) = g.take() {
                     self.device.destroy_buffer(s.buffer, None);

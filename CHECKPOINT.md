@@ -659,3 +659,32 @@ list owns the ids.
 - Next: H2 (pipeline/descriptor/shader-module cache + real VkPipelineCache,
   then submit fusion with explicit barriers + validate_sync gate); CI push of
   H0+H1 bundle awaits authorization.
+
+## 2026-09-08 — H2.1 DONE: object cache + real VkPipelineCache (disk-persisted); context-init flagged
+
+- Done: run_compute_push now caches {shader module, dsl, layout, pipeline,
+  descriptor pool} per (spv-ptr, bindings, push-len, entry-ptr) and uses one
+  real VkPipelineCache (seeded from and persisted to a device-keyed temp file,
+  104 KB verified on disk). PassRes still cleans partially-built handles on
+  error paths; every cached object + the cache is destroyed in VkContext::drop
+  before the device. one_shot fence-waits, so pool reset+realloc per call is
+  race-free (lock held across the dispatch; dispatches were already serialized).
+  Verified: 12/12 fixture scores BYTE-IDENTICAL to pre-H2.1 (pure plumbing),
+  suite 18/18, clippy -D warnings clean. Same-batch MIN-of-5: big 1.231 ->
+  1.184 (oracle 0.751), photo 0.378 -> 0.380 (oracle 0.031).
+  HONEST reading: pipeline creation was cheaper than H0's stage-time spread
+  implied (driver compiles fast on warm process); the remaining per-dispatch
+  cost is SUBMIT+FENCE - exactly what H2.2 removes.
+  NEW FINDING for the photo gate: context-init now measures ~218 ms of the
+  ~380 ms photo wall - validation-layer/device setup dominates small-image
+  parity and NO amount of H2.2/H3 fixes it while validation is always-on.
+  M10's photo clause (<= oracle+10%) will be structurally unreachable in CLI
+  mode unless validation becomes opt-in for release binaries - a human
+  decision (safety default vs perf target), to be surfaced at H6, not decided
+  silently.
+- Deviated from plan: none.
+- Blocked / open question: H2.2 needs its own fresh battery (5x suite repeats +
+  validate_sync + CI) - deferred to next working session, not rushed.
+- Next: H2.2 fused per-scale submit with explicit barriers; then H3 prep LUT;
+  M10 re-check each step. CI confirmation of H2.1 piggybacks on H2.2's push
+  (or push now if asked).

@@ -1,7 +1,19 @@
-// Single-shot compute dispatch: builds pipeline + descriptors per call.
-// Correctness first; pipeline/descriptor reuse is a Phase H optimization.
+// Compute dispatch with a per-process cache of Vulkan objects (H2.1):
+// shader module, set layout, pipeline layout, pipeline and descriptor pool
+// are built once per (spv, bindings, push, entry) key and reused; the old
+// build-and-destroy-per-call shape (correctness-first, see git history) paid
+// a full driver pipeline creation for every one of ~300 dispatches/image.
 use crate::context::{GpuBuffer, VkContext};
 use ash::vk;
+
+/// Cached per dispatch configuration (destroyed by VkContext::drop).
+pub(crate) struct PipeObjs {
+    pub(crate) shm: vk::ShaderModule,
+    pub(crate) dsl: vk::DescriptorSetLayout,
+    pub(crate) pl: vk::PipelineLayout,
+    pub(crate) pipe: vk::Pipeline,
+    pub(crate) pool: vk::DescriptorPool,
+}
 
 fn spv_words(bytes: &[u8]) -> Vec<u32> {
     assert!(bytes.len().is_multiple_of(4), "SPIR-V must be 4-byte aligned");
@@ -72,6 +84,13 @@ impl VkContext {
     }
 
     /// As `run_compute`, with raw push-constant bytes (must be 4-byte aligned).
+    ///
+    /// Object reuse (H2.1): the Vulkan handles below depend only on the shader
+    /// bytes, binding count, push-constant size and entry name - the buffers
+    /// themselves go through a descriptor set rebuilt each call. Keying a cache
+    /// on those four lets the ~300 dispatches/image share a handful of pipelines
+    /// instead of paying one driver compile each. one_shot() fence-waits, so a
+    /// descriptor set is dead before the next call resets the pool.
     pub fn run_compute_push(
         &self,
         spv: &[u8],
@@ -81,7 +100,6 @@ impl VkContext {
         push: &[u8],
     ) -> Result<(), String> {
         let device = self.device_interface();
-        let words = spv_words(spv);
 
         let (gx, gy) = split_groups(groups_x, self.max_groups_x());
         if gy > 65535 {
@@ -93,8 +111,18 @@ impl VkContext {
             ));
         }
 
-        unsafe {
-            let mut res = PassRes {
+        let key = (
+            spv.as_ptr() as usize,
+            buffers.len(),
+            push.len(),
+            entry.as_ptr() as usize,
+        );
+        let mut pipes = self.pipes.lock().map_err(|_| "pipes lock".to_string())?;
+        let objs = if let Some(o) = pipes.objs.get(&key) {
+            o
+        } else {
+            let words = spv_words(spv);
+            let mut fresh = PassRes {
                 device,
                 shm: None,
                 dsl: None,
@@ -102,84 +130,104 @@ impl VkContext {
                 pipe: None,
                 dp: None,
             };
-            res.shm = Some(
-                device
-                    .create_shader_module(
-                        &vk::ShaderModuleCreateInfo::default().code(&words),
-                        None,
+            unsafe {
+                fresh.shm = Some(
+                    device
+                        .create_shader_module(
+                            &vk::ShaderModuleCreateInfo::default().code(&words),
+                            None,
+                        )
+                        .map_err(|e| format!("shader module: {e:?}"))?,
+                );
+                let binds: Vec<vk::DescriptorSetLayoutBinding> = (0..buffers.len())
+                    .map(|i| {
+                        vk::DescriptorSetLayoutBinding::default()
+                            .binding(i as u32)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                    })
+                    .collect();
+                fresh.dsl = Some(
+                    device
+                        .create_descriptor_set_layout(
+                            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&binds),
+                            None,
+                        )
+                        .map_err(|e| format!("dsl: {e:?}"))?,
+                );
+                let dsl = fresh.dsl.unwrap();
+                let pc = if push.is_empty() {
+                    None
+                } else {
+                    Some(
+                        vk::PushConstantRange::default()
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .offset(0)
+                            .size(push.len() as u32),
                     )
-                    .map_err(|e| format!("shader module: {e:?}"))?,
-            );
-
-            let binds: Vec<vk::DescriptorSetLayoutBinding> = (0..buffers.len())
-                .map(|i| {
-                    vk::DescriptorSetLayoutBinding::default()
-                        .binding(i as u32)
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                })
-                .collect();
-            res.dsl = Some(
-                device
-                    .create_descriptor_set_layout(
-                        &vk::DescriptorSetLayoutCreateInfo::default().bindings(&binds),
-                        None,
-                    )
-                    .map_err(|e| format!("dsl: {e:?}"))?,
-            );
-            let dsl = res.dsl.unwrap();
-            let pc = if push.is_empty() {
-                None
-            } else {
-                Some(vk::PushConstantRange::default()
-                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                    .offset(0)
-                    .size(push.len() as u32))
+                };
+                fresh.pl = Some(
+                    device
+                        .create_pipeline_layout(
+                            &vk::PipelineLayoutCreateInfo::default()
+                                .set_layouts(std::slice::from_ref(&dsl))
+                                .push_constant_ranges(pc.as_slice()),
+                            None,
+                        )
+                        .map_err(|e| format!("pipeline layout: {e:?}"))?,
+                );
+                let pl = fresh.pl.unwrap();
+                let stage = vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::COMPUTE)
+                    .module(fresh.shm.unwrap())
+                    .name(entry);
+                let cpci = vk::ComputePipelineCreateInfo::default().stage(stage).layout(pl);
+                fresh.pipe = Some(
+                    *device
+                        .create_compute_pipelines(pipes.cache, &[cpci], None)
+                        .map_err(|e| format!("pipeline: {e:?}"))?
+                        .first()
+                        .ok_or("no pipeline")?,
+                );
+                let pool_sizes = [vk::DescriptorPoolSize::default()
+                    .ty(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(buffers.len() as u32)];
+                fresh.dp = Some(
+                    device
+                        .create_descriptor_pool(
+                            &vk::DescriptorPoolCreateInfo::default()
+                                .pool_sizes(&pool_sizes)
+                                .max_sets(1),
+                            None,
+                        )
+                        .map_err(|e| format!("dpool: {e:?}"))?,
+                );
+            }
+            let objs = PipeObjs {
+                shm: fresh.shm.take().unwrap(),
+                dsl: fresh.dsl.take().unwrap(),
+                pl: fresh.pl.take().unwrap(),
+                pipe: fresh.pipe.take().unwrap(),
+                pool: fresh.dp.take().unwrap(),
             };
-            res.pl = Some(
-                device
-                    .create_pipeline_layout(
-                        &vk::PipelineLayoutCreateInfo::default()
-                            .set_layouts(std::slice::from_ref(&dsl))
-                            .push_constant_ranges(pc.as_slice()),
-                        None,
-                    )
-                    .map_err(|e| format!("pipeline layout: {e:?}"))?,
-            );
-            let pl = res.pl.unwrap();
-            let stage = vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::COMPUTE)
-                .module(res.shm.unwrap())
-                .name(entry);
-            let cpci = vk::ComputePipelineCreateInfo::default().stage(stage).layout(pl);
-            res.pipe = Some(
-                *device
-                    .create_compute_pipelines(vk::PipelineCache::null(), &[cpci], None)
-                    .map_err(|e| format!("pipeline: {e:?}"))?
-                    .first()
-                    .ok_or("no pipeline")?,
-            );
-            let pipeline = res.pipe.unwrap();
+            // fresh now holds only Nones; its Drop frees nothing. PassRes still
+            // cleaned up any partially-built handles on the `?` paths above.
+            pipes.objs.insert(key, objs);
+            pipes.objs.get(&key).unwrap()
+        };
 
-            let pool_sizes = [vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(buffers.len() as u32)];
-            res.dp = Some(
-                device
-                    .create_descriptor_pool(
-                        &vk::DescriptorPoolCreateInfo::default()
-                            .pool_sizes(&pool_sizes)
-                            .max_sets(1),
-                        None,
-                    )
-                    .map_err(|e| format!("dpool: {e:?}"))?,
-            );
+        let pipeline = objs.pipe;
+        let pl = objs.pl;
+        unsafe {
+            device
+                .reset_descriptor_pool(objs.pool, vk::DescriptorPoolResetFlags::empty())
+                .map_err(|e| format!("dpool reset: {e:?}"))?;
             let ds = *device
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(res.dp.unwrap())
-                        .set_layouts(std::slice::from_ref(&dsl)),
+                        .descriptor_pool(objs.pool)
+                        .set_layouts(std::slice::from_ref(&objs.dsl)),
                 )
                 .map_err(|e| format!("dsets: {e:?}"))?
                 .first()
@@ -210,13 +258,7 @@ impl VkContext {
             self.one_shot(|cb| {
                 device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipeline);
                 if !push.is_empty() {
-                    device.cmd_push_constants(
-                        cb,
-                        pl,
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push,
-                    );
+                    device.cmd_push_constants(cb, pl, vk::ShaderStageFlags::COMPUTE, 0, push);
                 }
                 device.cmd_bind_descriptor_sets(
                     cb,
