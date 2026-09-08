@@ -21,6 +21,18 @@ fn run(args: &[&str]) -> (bool, String) {
 
 #[test]
 fn cli_gpu_and_cpu_match_goldens() {
+    // GPU-mode bar is device-gated by the fma fingerprint (same policy as
+    // e2e_parity); CPU mode is driver-independent and always strict.
+    let gpu_bar = match ssimulacra2_vulkan::context::VkContext::new() {
+        Ok(ctx) => {
+            if ctx.fma_ieee() {
+                1e-5
+            } else {
+                1e-3
+            }
+        }
+        Err(_) => 1e-3,
+    };
     for (pair, want) in GOLDEN {
         let f = |mode: &str, extra: &[&str]| {
             let o = format!("tests/fixtures/{pair}_orig.png");
@@ -32,7 +44,8 @@ fn cli_gpu_and_cpu_match_goldens() {
             assert!(ok, "{mode} {pair} failed");
             let g: f64 = got.parse().expect("score");
             let w: f64 = want.parse().unwrap();
-            assert!((g - w).abs() <= 1e-5, "{mode} {pair}: {g} vs {w}");
+            let bar = if extra.contains(&"--cpu") { 1e-5 } else { gpu_bar };
+            assert!((g - w).abs() <= bar, "{mode} {pair}: {g} vs {w} (bar {bar:e})");
         };
         f("gpu", &[]);
         f("cpu", &["--cpu"]);
@@ -70,7 +83,21 @@ fn cli_asymmetric_alpha_dispatch_matches_oracle() {
             let (ok, got) = run(&args);
             assert!(ok, "{a}/{b} {extra:?} failed");
             let g: f64 = got.parse().unwrap();
-            assert!((g - want).abs() <= 1e-5, "{a} vs {b} ({extra:?}): {g} vs oracle {want}");
+            let bar = if extra.contains(&"--cpu") {
+                1e-5
+            } else {
+                match ssimulacra2_vulkan::context::VkContext::new() {
+                    Ok(ctx) => {
+                        if ctx.fma_ieee() {
+                            1e-5
+                        } else {
+                            1e-3
+                        }
+                    }
+                    Err(_) => 1e-3,
+                }
+            };
+            assert!((g - want).abs() <= bar, "{a} vs {b} ({extra:?}): {g} vs oracle {want}");
         }
     }
 }

@@ -1,0 +1,10 @@
+#version 450
+// Device fma fingerprint: a*b+c where correctly-rounded fma differs from
+// rounded-mul-then-add (constants chosen 2026-09-08: a=1+2^-23, b=1+2^-22,
+// c=-1). IEEE-fma devices return 0x34BE76C0-ish; mul+add devices differ.
+layout(local_size_x = 1) in;
+layout(push_constant) uniform PC { uint a; uint b; uint c; };
+layout(set = 0, binding = 0) buffer O { float o[]; };
+void main() {
+  o[0] = fma(uintBitsToFloat(a), uintBitsToFloat(b), uintBitsToFloat(c));
+}

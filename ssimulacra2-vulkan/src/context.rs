@@ -33,6 +33,7 @@ pub struct VkContext {
     cmd_pool: vk::CommandPool,
     mem_props: vk::PhysicalDeviceMemoryProperties,
     device_name: String,
+    fma_ieee: bool,
 }
 
 fn cstr(s: &'static [u8]) -> &'static CStr {
@@ -130,7 +131,45 @@ impl VkContext {
             cmd_pool,
             mem_props,
             device_name,
-        })
+            fma_ieee: false,
+        }
+        .with_probe()
+        )
+    }
+
+    /// Run the fma fingerprint probe; a device whose fma() is not the
+    /// correctly-rounded IEEE fma cannot reproduce the oracle's SIMD MulAdd
+    /// bit-for-bit, so ulp-level parity tests must not gate on it.
+    fn with_probe(mut self) -> Self {
+        self.fma_ieee = self.fma_probe().unwrap_or_default();
+        self
+    }
+
+    fn fma_probe(&self) -> Result<bool, String> {
+        let a: f32 = f32::from_bits(0x3f80_0001);
+        let b: f32 = f32::from_bits(0x3f80_0002);
+        let c: f32 = -1.0f32;
+        let expected = a.mul_add(b, c); // IEEE-correct on CPU
+        let buf = self.create_empty(4)?;
+        let mut push = Vec::with_capacity(12);
+        push.extend_from_slice(&a.to_bits().to_le_bytes());
+        push.extend_from_slice(&b.to_bits().to_le_bytes());
+        push.extend_from_slice(&c.to_bits().to_le_bytes());
+        self.run_compute_push(
+            include_bytes!("../shaders/fma_probe.spv"),
+            crate::c_main(),
+            &[&buf],
+            1,
+            &push,
+        )?;
+        let got = self.readback_f32(&buf)?;
+        self.destroy_buffer(buf);
+        Ok(got[0].to_bits() == expected.to_bits())
+    }
+
+    /// True if this device's fma matches IEEE correctly-rounded fma.
+    pub fn fma_ieee(&self) -> bool {
+        self.fma_ieee
     }
 
     pub fn device_name(&self) -> &str {

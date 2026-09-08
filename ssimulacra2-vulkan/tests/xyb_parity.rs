@@ -11,6 +11,7 @@ fn dump_path(fixture: &str, name: &str) -> String {
 }
 
 fn check_pair(ctx: &VkContext, fixture: &str, which: &str) {
+    let strict = ctx.fma_ieee();
     let lin = Dump::read(dump_path(fixture, &format!("linear_{which}_s0")));
     let n = (lin.xsize * lin.ysize) as usize;
     assert_eq!(lin.channels, 3, "linear input must be 3-plane");
@@ -23,14 +24,21 @@ fn check_pair(ctx: &VkContext, fixture: &str, which: &str) {
         let got = ctx.readback_f32(&out).expect("readback");
         ctx.destroy_buffer(out);
         let (d, i) = max_abs_diff(&got, &golden.f32_data);
-        assert_eq!(
-            d,
-            0.0,
-            "{fixture}/{which} positive={positive}: NOT bit-exact: max abs {d:e} at {i} (got {} want {})",
-            got[i],
-            golden.f32_data[i]
-        );
-        println!("{fixture}/{which} positive={positive}: bit-exact");
+        if strict {
+            assert_eq!(
+                d,
+                0.0,
+                "{fixture}/{which} positive={positive}: NOT bit-exact: max abs {d:e} at {i} (got {} want {})",
+                got[i],
+                golden.f32_data[i]
+            );
+            println!("{fixture}/{which} positive={positive}: bit-exact");
+        } else {
+            // non-IEEE-fma device (e.g. llvmpipe): ulp-level equality is
+            // impossible by construction; sanity bar catches algorithmic bugs.
+            assert!(d <= 1e-5, "{fixture}/{which} positive={positive}: {d:e} at {i}");
+            println!("{fixture}/{which} positive={positive}: {d:e} (sanity bar, device fma not IEEE)");
+        }
     }
     ctx.destroy_buffer(buf);
 }

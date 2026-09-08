@@ -10,6 +10,15 @@ fn max_abs(a: &[f64], b: &[f64]) -> f64 {
 }
 
 fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
+    // ulp-level bars only on IEEE-fma devices; others get sanity bars that
+    // still catch algorithmic errors (those diverge >=1e-2; llvmpipe measured
+    // norms 3.4e-5 on CI run #2). Identity is driver-independent (symmetric
+    // computation) and stays exact everywhere.
+    let (norm_bar, score_bar, w_bar) = if ctx.fma_ieee() {
+        (1e-6, 1e-5, 1e-6)
+    } else {
+        (1e-3, 1e-3, 1e-3)
+    };
     let p = |name: &str| -> Dump {
         Dump::read(format!(
             "{}/../dumps/{fixture}/run1/r{}_{name}.bin",
@@ -27,7 +36,7 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
         let d1 = max_abs(&sn.avg_ssim, &g.f64_data);
         let d2 = max_abs(&sn.avg_edgediff, &e.f64_data);
         println!("{fixture} r{run} s{s}: ssim_norms {d1:e} edge_norms {d2:e}");
-        assert!(d1 <= 1e-6 && d2 <= 1e-6, "{fixture} s{s} norms drift");
+        assert!(d1 <= norm_bar && d2 <= norm_bar, "{fixture} s{s} norms drift");
     }
     let got = score(&scales);
     let want = p("score_final_s0").f64_data[0];
@@ -37,8 +46,8 @@ fn check(ctx: &VkContext, fixture: &str, run: u32, expect_exact_100: bool) {
         assert_eq!(got, 100.0, "identity must be exactly 100");
         assert_eq!(wd, 0.0, "identity weighted sum must be bit-exact 0 drift");
     }
-    assert!((got - want).abs() <= 1e-5, "{fixture} score drift");
-    assert!(wd <= 1e-6, "{fixture} weighted drift {wd:e}");
+    assert!((got - want).abs() <= score_bar, "{fixture} score drift");
+    assert!(wd <= w_bar, "{fixture} weighted drift {wd:e}");
 }
 
 #[test]

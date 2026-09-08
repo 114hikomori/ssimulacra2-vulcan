@@ -20,3 +20,8 @@ pub mod oracle_dump;
 pub mod pipeline;
 pub mod score;
 pub mod xyb;
+
+/// Shared "main" entry-point name for compute dispatches.
+pub fn c_main() -> &'static std::ffi::CStr {
+    c"main"
+}
