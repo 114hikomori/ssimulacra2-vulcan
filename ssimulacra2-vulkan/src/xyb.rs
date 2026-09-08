@@ -74,7 +74,7 @@ pub fn xyb_convert(
     };
     ctx.run_compute_push(
         include_bytes!("../shaders/xyb_positive.spv"),
-        std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap(),
+        c"main",
         &[linear, &out],
         ((n as u32) + 63) / 64,
         &bytes_of(&push),

@@ -19,7 +19,7 @@ fn downsample(ctx: &VkContext, src: &GpuBuffer, iw: usize, ih: usize) -> Result<
     }
     ctx.run_compute_push(
         include_bytes!("../shaders/downsample_box2.spv"),
-        std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap(),
+        c"main",
         &[src, &dst],
         ((3 * ow * oh) as u32 + 63) / 64,
         &push,
@@ -31,7 +31,7 @@ fn mul(ctx: &VkContext, a: &GpuBuffer, b: &GpuBuffer, n: usize) -> Result<GpuBuf
     let o = ctx.create_empty(n)?;
     ctx.run_compute_push(
         include_bytes!("../shaders/mul_planes.spv"),
-        std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap(),
+        c"main",
         &[a, b, &o],
         ((n) as u32 + 63) / 64,
         &(n as u32).to_le_bytes(),
@@ -83,7 +83,7 @@ pub fn compute_ssimulacra2_gpu(
         let ed = ctx.create_empty(3 * n)?;
         ctx.run_compute_push(
             include_bytes!("../shaders/maps_combine.spv"),
-            std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap(),
+            c"main",
             &[&x1, &x2, &mu1, &mu2, &s11, &s22, &s12, &sd, &ed],
             ((3 * n) as u32 + 63) / 64,
             &(n as u32).to_le_bytes(),

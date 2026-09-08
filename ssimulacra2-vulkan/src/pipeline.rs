@@ -4,7 +4,7 @@ use crate::context::{GpuBuffer, VkContext};
 use ash::vk;
 
 fn spv_words(bytes: &[u8]) -> Vec<u32> {
-    assert!(bytes.len() % 4 == 0, "SPIR-V must be 4-byte aligned");
+    assert!(bytes.len().is_multiple_of(4), "SPIR-V must be 4-byte aligned");
     bytes
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes(c.try_into().unwrap()))

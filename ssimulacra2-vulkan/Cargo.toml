@@ -7,5 +7,6 @@ description = "Vulkan compute backend for SSIMULACRA2 (clean-room port; oracle: 
 
 [dependencies]
 ash = "0.38.0"
+png = "0.17"
 
 [dev-dependencies]

@@ -168,3 +168,26 @@ list owns the ids.
 - Next: Phase G — cpu.rs fallback path (faithful Rust reimpl, validated vs dumps), PNG-decode
   CLI with --gpu, ICC reject message, .github/workflows/ci.yml (ubuntu+lavapipe+oracle),
   validation matrix green incl. gray/alpha/odd/small (M7) + CLI/CI/fallback (M8).
+
+## 2026-09-08 — M7 ✅ + M8 ✅ (Phase G complete; CI file written, unrun pending push)
+
+- Done: cpu.rs: faithful Rust CPU reimplementation — PNG decode (png 0.17, 8-bit RGB/RGBA/
+  Gray→replicate, iCCP/gAMA/cHRM chunks rejected with pointer to C++ oracle), TF_SRGB
+  rational-polynomial linearization (fma Horner + true div, kLowDivInv constant), alpha blend
+  in sRGB space, XYB/downsample/blur/combine with f64 d kept double exactly like the oracle.
+  Verified BIT-EXACT vs oracle dumps: decode+linearize (photo/gray/alpha@bg0.1, 0 differing
+  pixels), per-scale norms (photo/step/gray/s8/s15, all values bit-exact per scale), scores
+  match to 8 decimals. CLI (main.rs): mirrors C++ contract (%.8f, alpha worst-of-bg min,
+  <8x8 + size-mismatch rejects, --cpu flag, GPU-default with CPU fallback on device failure).
+  cli_parity: 12 fixture pairs × {gpu,cpu} vs C++ goldens ≤1e-5 incl. big 2048² and exact
+  100.00000000 identity. M7 matrix green (gray/alpha/odd/near-cutoff/sub-cutoff/identical/
+  large). Clippy --workspace --all-targets: zero warnings (transcription-sensitive lints
+  allowed with stated policy in lib.rs header). .github/workflows/ci.yml written per plan §13
+  (oracle build + golden score check + lavapipe cargo test + clippy -D warnings).
+- Deviated from plan: CI job NOT executed (no push authorization; file is untested until
+  first push — flagged honestly in M8). png crate 0.17 (0.18 API drift avoided; 0.17.16 docs
+  checked).
+- Blocked / open question: none.
+- Next: M9 quick performance profile (GPU vs CPU vs C++ oracle, representative sizes, per-
+  stage timing) -> record; M10 (optimized path beats CPU) is Phase H per plan and needs its
+  own plan revision - hand back after M9 with data.

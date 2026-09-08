@@ -1,0 +1,73 @@
+name: CI
+
+# Correctness matrix per ssimulacra2-vulkan-fable-plan.md §13:
+# C++ oracle build + golden score check, then the Rust workspace (GPU tests on
+# lavapipe, validation layer on). Real-GPU legs run locally (see CHECKPOINT),
+# not here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install oracle deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build \
+            libhwy-dev liblcms2-dev libjpeg-turbo8-dev libpng-dev zlib1g-dev
+      - name: Build oracle (default, no dumps)
+        run: |
+          cmake -S src -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=false
+          ninja -C build ssimulacra2
+      - name: Oracle scores match recorded goldens
+        run: |
+          for p in photo grad noise step odd s8 s9 s12 s15 alpha gray; do
+            s=$(./build/ssimulacra2 tests/fixtures/${p}_orig.png tests/fixtures/${p}_dist.png)
+            grep -q "^$p $s$" oracle/scores_prepatch.txt || { echo "DRIFT $p: $s"; exit 1; }
+          done
+          s=$(./build/ssimulacra2 tests/fixtures/photo_orig.png tests/fixtures/photo_orig.png)
+          [ "$s" = "100.00000000" ] || { echo "identity drift: $s"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oracle
+          path: build/ssimulacra2
+
+  rust:
+    needs: oracle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lavapipe + validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Restore oracle
+        uses: actions/download-artifact@v4
+        with:
+          name: oracle
+          path: build
+      - name: Regenerate golden dumps (dump build)
+        run: |
+          sudo apt-get install -y build-essential cmake ninja-build \
+            libhwy-dev liblcms2-dev libjpeg-turbo8-dev libpng-dev zlib1g-dev
+          cmake -S src -B build-dump -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DJPEGXL_ENABLE_OPENEXR=false -DCMAKE_CXX_FLAGS=-DSSIMULACRA2_DUMPS
+          ninja -C build-dump ssimulacra2
+          chmod +x build/ssimulacra2 build-dump/ssimulacra2
+          bash oracle/gen_goldens.sh run1
+      - name: cargo test (lavapipe)
+        run: cargo test -j 2 --workspace
+      - name: clippy
+        run: cargo clippy --workspace -- -D warnings

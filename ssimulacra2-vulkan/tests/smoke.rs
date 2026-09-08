@@ -1,3 +1,4 @@
+#![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
 // M1 smoke test: x2 shader element-exact on a real GPU (and lavapipe in CI).
 use ssimulacra2_vulkan::context::VkContext;
 
@@ -23,7 +24,7 @@ fn smoke_double_matches_cpu() {
     let buf = ctx.create_buffer_f32(&input).expect("upload");
     ctx.run_compute(
         include_bytes!("../shaders/smoke_double.spv"),
-        std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap(),
+        c"main",
         &[&buf],
         (input.len() as u32 + 63) / 64,
     )

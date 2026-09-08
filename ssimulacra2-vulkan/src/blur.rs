@@ -158,7 +158,7 @@ pub fn blur_planes(
     let temp = ctx.create_empty(n)?;
     let out = ctx.create_empty(n)?;
     let push = push_bytes(rg, w as u32, h as u32);
-    let entry = std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap();
+    let entry = c"main";
     ctx.run_compute_push(
         include_bytes!("../shaders/blur_h.spv"),
         entry,

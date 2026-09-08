@@ -1,3 +1,4 @@
+#![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
 // M4: single-scale error maps + f64 norms vs oracle dumps.
 use ssimulacra2_vulkan::blur::{blur_planes, create_recursive_gaussian};
 use ssimulacra2_vulkan::context::{GpuBuffer, VkContext};
@@ -37,7 +38,7 @@ fn range_audit(name: &str, slices: &[&[f32]]) -> (f32, f32) {
 fn single_scale_maps_and_norms_match_oracle() {
     let ctx = VkContext::new().expect("vulkan context");
     let rg = create_recursive_gaussian(1.5);
-    let entry = std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap();
+    let entry = c"main";
     for fixture in ["photo", "step", "gray", "s8"] {
         let lin1 = Dump::read(dump_path(fixture, "xyb_orig_s0"));
         let lin2 = Dump::read(dump_path(fixture, "xyb_dist_s0"));
@@ -52,7 +53,7 @@ fn single_scale_maps_and_norms_match_oracle() {
         let up = |v: &Vec<f32>| ctx.create_buffer_f32(v).expect("upload");
         let b11 = up(&mul11); let b22 = up(&mul22); let b12 = up(&mul12);
         let bi1 = up(&lin1.f32_data); let bi2 = up(&lin2.f32_data);
-        let mut blur = |src: &GpuBuffer| blur_planes(&ctx, src, w, h, &rg).expect("blur");
+        let blur = |src: &GpuBuffer| blur_planes(&ctx, src, w, h, &rg).expect("blur");
         let s11 = blur(&b11);
         let s22 = blur(&b22);
         let s12 = blur(&b12);
