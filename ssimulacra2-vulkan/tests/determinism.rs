@@ -1,3 +1,4 @@
+#![allow(clippy::manual_div_ceil)] // transcription of oracle rounding-up forms
 // F4 (BUG_HUNT): localize the llvmpipe identity anomaly. The algebra says
 // identical inputs through identical kernels must produce bit-identical
 // outputs (=> d == 0 => score exactly 100); the anomaly proves otherwise.
