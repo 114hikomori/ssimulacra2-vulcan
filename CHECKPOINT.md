@@ -395,3 +395,28 @@ list owns the ids.
   anomaly); probe prints, never fails, so the run is safe regardless of result.
 - Next: push f4_probe commit (awaits authorization), read "F4 probe" lines from
   CI log, then evidence-based fix or documented acceptance of the gated anomaly.
+
+## 2026-09-08 — F4 ROOT-CAUSED by probe + fixed (awaiting llvmpipe confirmation)
+
+- Done: CI run #13 probe gave a clean split: A (mu=0) and B (sigma=0) 0/12288
+  diverge; C (delta=0), D (realistic identity), E (non-identity) diverge
+  (8695/4201/606, d up to 2^-21). The only structural difference: diverging
+  cases subtract a KERNEL-COMPUTED product from a buffer value (s12 - m1*m2),
+  clean cases never mix the two. Root cause: llvmpipe's SPIR-V->LLVM path
+  contracts mul+sub into fma (s12 - m1*m2 -> fma(-m1, m2, s12), one rounding
+  instead of the CPU's two) and its f32 fma is non-IEEE (fingerprinted);
+  'precise' stops only glslang, LLVM re-contracts downstream. This also
+  explains run #9's null result (num_s trees were innocent - probe A proves
+  the add-only trees evaluate symmetrically) and why upstream buffers were
+  bit-equal (mul_planes has no add/sub consumer -> no contraction site).
+  Fix: mu11/mu22/mu12/dmsq computed as float(double*double) - exact for f32
+  inputs, provably the correctly-rounded f32 product on any device. Verified
+  locally: probe 5/5 bit-exact, full suite 18/18 with RDNA2 parity unchanged
+  (f64 barrier value-neutral on IEEE devices), clippy -D warnings clean.
+- Deviated from plan: none (probe was the human-approved CI round-trip).
+- Blocked / open question: llvmpipe confirmation pending one CI run - if C/D
+  go 0-diverge and identity fixture returns exactly 100.0 there, F4 closes
+  and the non-IEEE identity gates (e2e/cli/determinism prints) can be
+  tightened to strict asserts on ALL devices.
+- Next: push fix commit (awaits authorization); on green CI, tighten gates +
+  mark F4 CLOSED in BUG_HUNT.md.

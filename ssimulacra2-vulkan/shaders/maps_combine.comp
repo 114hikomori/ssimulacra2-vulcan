@@ -36,23 +36,26 @@ void main() {
 
   float m1 = mu1[b];
   float m2 = mu2[b];
-  // `precise` blocks mul/sub contraction: the CPU rounds mu11/mu22/mu12/dm^2
-  // to f32 as separate values (ssimulacra2.cc:129-131) before subtracting.
-  precise float mu11 = m1 * m1;
-  precise float mu22 = m2 * m2;
-  precise float mu12 = m1 * m2;
-  precise float dm = m1 - m2;
-  precise float dmsq = dm * dm;
-  precise float num_m = 1.0 - dmsq;
-  // delta + delta + kC2 is bit-identical to the oracle's 2*(s12-mu12)+kC2 on
-  // IEEE devices (doubling is exact, so fl(2d+kC2) is the same value under any
-  // contraction choice). Kept as a value-neutral robustness change: it makes
-  // num_s the same expression tree as denom_s for identical inputs, which
-  // SHOULD force d == 0 for identity on any device - but CI run #9 disproved
-  // the contraction hypothesis (llvmpipe drift bit-identical to run #8), and
-  // run #11 showed d = 2^-24 persists there even with every upstream buffer
-  // bit-equal. F4 root cause is still OPEN, inside llvmpipe's evaluation of
-  // this kernel; this expression is not the fix it was once claimed to be.
+  // F4 root cause (probe, CI run #13): llvmpipe's SPIR-V->LLVM path contracts
+  // a mul consumed by an add/sub into fma, and its f32 fma is non-IEEE
+  // (fingerprinted). The probe isolated it: cases where the kernel's own
+  // products meet only same-device values (A: mu=0, B: sigma=0) were clean,
+  // while every case subtracting a kernel-computed product from a buffer
+  // value (C/D/E) diverged - s12 - m1*m2 became fma(-m1, m2, s12), one
+  // rounding instead of the CPU's two. `precise` only stops glslang; LLVM
+  // re-contracts downstream. Barrier: compute each product in f64 (exact for
+  // f32 inputs, 24x24 <= 53 bits) and round once to f32 - provably the
+  // correctly-rounded f32 product on any device, bit-identical to the CPU
+  // (ssimulacra2.cc:129-131) on IEEE devices too (RDNA2 suite stays exact).
+  float mu11 = float(double(m1) * double(m1));
+  float mu22 = float(double(m2) * double(m2));
+  float mu12 = float(double(m1) * double(m2));
+  float dm = m1 - m2;
+  float dmsq = float(double(dm) * double(dm));
+  float num_m = 1.0 - dmsq;
+  // delta + delta + kC2 keeps num_s the same expression tree as denom_s;
+  // probe case A proved these add-only trees evaluate identically even on
+  // llvmpipe (x+x strength reduction hits both sides the same way).
   float delta = s12[b] - mu12;
   float num_s = delta + delta + kC2;
   float denom_s = (s11[b] - mu11) + (s22[b] - mu22) + kC2;
