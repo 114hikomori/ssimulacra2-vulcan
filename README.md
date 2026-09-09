@@ -10,9 +10,33 @@ the correctness oracle.
 ```
 cargo build --release                      # workspace: ssimulacra2-vulkan CLI
 cargo test --workspace                     # parity suite (needs dumps, see below)
-target/release/ssimulacra2-vulkan original.png distorted.png   # GPU path (default)
-target/release/ssimulacra2-vulkan --cpu original.png distorted.png
+target/release/ssimulacra2-vulkan original.png distorted.png   # size-routed engine
+target/release/ssimulacra2-vulkan --gpu a.png b.png   # force Vulkan path
+target/release/ssimulacra2-vulkan --cpu a.png b.png   # force CPU path
+target/release/ssimulacra2-vulkan score-many --orig orig.png --vars <dir> [--no-cache] [--profile]
 ```
+
+### Engine selection: two crossovers, don't conflate them
+
+Every number below is labeled with its comparator and protocol — the routing
+threshold and the competitiveness point answer *different questions* and
+differ by an order of magnitude (conflating them produced the short-lived
+"route at >=8MP" proposal, corrected 2026-09-09; see CHECKPOINT).
+
+| Metric | Value | Comparator | Protocol |
+|---|---|---|---|
+| **Routing threshold** (wired: 500k px) | crossover ~0.40-0.45 MP | this binary's `--cpu` engine (the one routing switches to) | cold MIN-of-3/5 single-pair CLI, warmed file cache, AMD RX 6600M, `--gpu`-pinned; reproducible via `bench/routing_calib.py` |
+| **M10 competitiveness** | GPU wins 0.84-0.93x at 8.3 MP (still loses at 6.3 MP) | C++ oracle binary (`build/ssimulacra2.exe`) | cold MIN-of-5, same-session, single process |
+| Batch caching win | 19.5% (range 15.8-20.4%) at 4K, N=20 | same-process no-cache batch baseline | cold MIN-of-5, warmed file cache |
+
+Below the routing threshold the single-pair CLI runs the CPU engine (GPU
+per-process context-init + 6-scale overhead is not amortized; the CPU engine
+wins up to ~20x on tiny images). `score-many` is deliberately never routed:
+its context is built once per batch and the caching win is resolution-shared,
+so its math is per-batch, not per-pair. The original >=8MP proposal for
+routing was based on the oracle comparator, which the in-binary fallback does
+not match (it is ~6x slower than the C++ oracle) — see CHECKPOINT
+2026-09-09 / batch addendum for the full correction.
 
 CLI contract matches the C++ tool: score `%.8f` on stdout, `-inf..100`, alpha
 inputs take the worst of backgrounds 0.1/0.9 (only when the *original* has

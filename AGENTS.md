@@ -95,7 +95,12 @@ input needed — never a vague "let me know how you'd like to proceed."
    items off as they land.
 5. **Verify by observation.** Run the test / dump-compare utility / build; don't infer
    correctness from re-reading your own diff. For every bug fixed, search the rest of the
-   codebase for the same pattern before calling it done.
+   codebase for the same pattern before calling it done. **Every number recorded anywhere in
+   the repo (checkpoint, README, plan docs, commit messages) must name its comparator and its
+   protocol next to it.** Three defects so far were inherited bare numbers: a unit error
+   (27% of *pipeline* read as % of *wall*), a warm/cold error (0.71 s/image), and a
+   comparator error (8.3 MP oracle-crossover proposed as the routing threshold, whose real
+   comparator is the in-binary CPU engine — crossover ~0.45 MP).
 6. **Report outcome-first.** Commit messages and checkpoint entries lead with what happened and
    what proved it — not a narration of steps 1–5. Don't describe this process by name anywhere
    in the repo or to the user; just follow it.

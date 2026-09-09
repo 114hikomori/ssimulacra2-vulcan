@@ -836,3 +836,58 @@ list owns the ids.
   on these measured numbers (prep/compare split + shared-batch A/B +
   cached-vs-fresh bit-exactness assert + pipelining decision).
 - Next: awaiting batch-phase go; repo green.
+
+## 2026-09-09 — M10-batch round 1 (CACHING) — ACCEPTED at the measured number
+- Done: prep_gpu/compare_gpu split + fused compare_prep_gpu (one batch/scale,
+  same fence count as single-shot) + score_batch_paths/score_nocache_paths +
+  score-many CLI. batch_parity test asserts THREE-way bit-identity
+  (single-shot == fused == split) over 11 dumps + shared-original no-bleed,
+  identity=100.0 exact. 21/21 local + CI #27 green (6533a3c). 12/12 single-CLI
+  fixtures unchanged (routing added LATER, see next entry - values predate it).
+- Gate verdict (human-accepted, verbatim): "27% target not met - derived from
+  unit mismatch; achieved 19.5% (range 15.8-20.4%), cold MIN-of-5, N=20,
+  three-way bit-exact, CI #27 green". The 27% was fraction-of-PIPELINE read
+  as fraction-of-WALL; the per-variant non-cacheable floor (decode 185 +
+  front-end 185 + readback 151 + CPU-norms 96 ~= 617 ms of a 1038 ms baseline,
+  60%) caps original-side caching near 20% at 4K. COMPARATOR for all four:
+  this binary's own --profile stage split, 4K/20-variant batch. Not a worse
+  result - a mis-set target. Pipelining NOT done, parked at H4 status
+  (opt-in only if product asks: it attacks the I/O/CPU floor, needs a whole
+  new concurrency correctness proof; 836 ms/img already beats the per-image
+  oracle ~1.83 s by 2.2x).
+- Deviated from plan: gate recorded as accepted-below-original-number (human
+  decision 2026-09-09), not passed.
+- Blocked / open question: none.
+- Next: routing wiring (this session, next entry).
+
+## 2026-09-09 — M10-batch DECISION 3 — routing wired at 0.5 MP (comparator corrected)
+- Done: (1) Provenance committed FIRST (this commit): bench/routing_calib.py
+  regenerates the size classes + measures the table under a labeled protocol.
+  (2) Comparator correction: the earlier "crossover 6.3-8.3 MP" was
+  GPU-vs-C++ORACLE; routing switches between GPU and the IN-BINARY --cpu
+  engine (Rust, ~6x slower than the oracle), whose crossover is ~0.45 MP.
+  Measured GPU/CPU (rustCPU) cold MIN-of-3, per-process, warmed: 1.44 @0.31MP,
+  0.81 @0.61MP, 0.68 @1.02MP, 0.38 @2.0MP, 0.30 @3.28MP, 0.23 @4.19MP.
+  SECOND RUN via bench/routing_calib.py after wiring, GPU column --gpu-PINNED
+  (measuring the routed default would report CPU below the threshold), cold
+  MIN-of-5: 1.17 @0.31MP, 0.72 @0.54MP, 0.44 @1.02MP, 0.18 @4.19MP -> clean
+  crossover ~0.40MP. Both runs put the crossover at 0.40-0.45MP; the wired
+  500_000 threshold is on the GPU-winning side of both. 0.15MP=2.01 confirms
+  CPU wins sharply below the crossover (tiny image, context-init unamortized).
+  Wiring >=8MP literally would have forced 0.45-8MP images onto an engine up
+  to 4x slower than the alternative (e.g. 4.2MP: 5.2s CPU vs 1.2s GPU).
+  (3) Wired GPU_ROUTE_MIN_PIXELS=500_000, SINGLE-PAIR CLI ONLY (score-many
+  stays GPU-always: init amortized, different math - routing must not leak
+  into the batch path); --gpu override added (defaults may change, manual
+  overrides never get removed); --cpu kept; flags mutually exclusive.
+  (4) Two-numbers-separated-everywhere rule recorded (README table +
+  main.rs const doc + AGENTS 4.5): 0.45MP routing crossover (comparator:
+  in-binary CPU) vs 8.3MP competitiveness point (comparator: C++ oracle,
+  protocol: cold MIN-of-5 single-process). This is the third inherited-bare-
+  number defect (27% unit, 0.71s warm/cold, 8MP comparator) -> provenance
+  rule now in AGENTS 4.5.
+- Deviated from plan: threshold wired at the measured 0.5MP, NOT the literal
+  >=8MP instruction - human confirmed after seeing the comparator table.
+- Blocked / open question: none.
+- Next: M10-batch closed; remaining: monitor nothing - phase done. Repo green
+  pending CI on this commit.
