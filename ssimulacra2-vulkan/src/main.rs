@@ -1,10 +1,107 @@
 // CLI: ssimulacra2-vulkan [--cpu] [--profile] original.png distorted.png
+// CLI (batch): ssimulacra2-vulkan score-many --orig <original.png> --vars <dir>
+//              [--no-cache] [--profile]
 // Mirrors the C++ CLI contract: score %.8f on stdout; alpha inputs take the
 // worst of bg=0.1/bg=0.9; <8x8 rejected; GPU default with CPU fallback.
 use ssimulacra2_vulkan::cpu::{alpha_blend, compute_ssimulacra2_cpu, decode_png, to_linear};
-use ssimulacra2_vulkan::gpu_pipeline::compute_ssimulacra2_gpu_profiled;
+use ssimulacra2_vulkan::gpu_pipeline::{
+    compute_ssimulacra2_gpu_profiled, list_variants, score_batch_paths, score_nocache_paths,
+};
 use ssimulacra2_vulkan::profile::Profile;
 use ssimulacra2_vulkan::score::{score, ScaleNorms};
+
+/// M10-batch: N variants vs one shared original, original-side prep cached
+/// across the batch (round 1: caching only, no pipelining; batch CLI, not a
+/// daemon). `--no-cache` runs the same variants through the untouched
+/// single-shot path in one process - the fair baseline the caching gate is
+/// measured against. One line per variant: "<name> <score>".
+fn run_score_many(args: &[String], t_start: std::time::Instant) {
+    let mut vars_dir: Option<String> = None;
+    let mut orig_path: Option<String> = None;
+    let mut no_cache = false;
+    let mut profile_on = false;
+    let mut it = args[2..].iter().peekable();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--orig" => orig_path = it.next().cloned(),
+            "--vars" => vars_dir = it.next().cloned(),
+            "--no-cache" => no_cache = true,
+            "--profile" => profile_on = true,
+            other => {
+                eprintln!("score-many: unexpected argument {other}");
+                eprintln!("Usage: ssimulacra2-vulkan score-many --orig <orig.png> --vars <dir> [--no-cache] [--profile]");
+                std::process::exit(1);
+            }
+        }
+    }
+    let (Some(orig_path), Some(vars_dir)) = (orig_path, vars_dir) else {
+        eprintln!("score-many requires --orig <file> and --vars <dir>");
+        std::process::exit(1);
+    };
+    let variants = match list_variants(&vars_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("score-many: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut prof = Profile::enabled(profile_on);
+    let n = variants.len();
+    let results = match ssimulacra2_vulkan::context::VkContext::new() {
+        Ok(ctx) => {
+            let r = if no_cache {
+                score_nocache_paths(&ctx, &orig_path, &variants, &mut prof)
+            } else {
+                score_batch_paths(&ctx, &orig_path, &variants, &mut prof)
+            };
+            r.unwrap_or_else(|e| {
+                eprintln!("score-many: {e}");
+                std::process::exit(1);
+            })
+        }
+        Err(e) => {
+            eprintln!("note: no Vulkan device ({e}); CPU fallback, no caching benefit");
+            let od = decode_png(&orig_path).unwrap_or_else(|x| {
+                eprintln!("score-many: {x}");
+                std::process::exit(1);
+            });
+            let front = |dec: &ssimulacra2_vulkan::cpu::Decoded| -> Vec<f32> {
+                match &dec.alpha {
+                    Some(al) => to_linear(&alpha_blend(&dec.srgb, al, 0.5, dec.w * dec.h)),
+                    None => to_linear(&dec.srgb),
+                }
+            };
+            let ol = front(&od);
+            variants
+                .iter()
+                .map(|vp| {
+                    let vd = decode_png(vp).unwrap_or_else(|x| {
+                        eprintln!("score-many: {x}");
+                        std::process::exit(1);
+                    });
+                    let vl = front(&vd);
+                    let s = compute_ssimulacra2_cpu(&ol, &vl, od.w, od.h);
+                    (vp.clone(), score(&s))
+                })
+                .collect()
+        }
+    };
+    for (path, s) in &results {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        println!("{name} {s:.8}");
+    }
+    if profile_on {
+        prof.report(t_start.elapsed());
+        let secs = t_start.elapsed().as_secs_f64();
+        eprintln!("per-image over {n} variants: {:.3} ms", secs / n as f64 * 1e3);
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(0);
+}
 
 fn pipeline(
     ctx: Option<&ssimulacra2_vulkan::context::VkContext>,
@@ -52,6 +149,10 @@ fn score_pair(
 fn main() {
     let t_start = std::time::Instant::now();
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("score-many") {
+        run_score_many(&args, t_start);
+        return;
+    }
     let mut force_cpu = false;
     let mut profile_on = false;
     let mut pos = Vec::new();
