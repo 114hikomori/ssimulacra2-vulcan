@@ -9,6 +9,13 @@ plus the test suite, CI workflow, and oracle scripts.
 Baseline observation: `cargo test --workspace` on this host (RX 6600M, IEEE-fma
 path, validation active) — 13/13 green, 2026-09-08. CI run #6 (lavapipe) — green.
 
+**Status 2026-09-09: ALL 12 FINDINGS CLOSED OR ACCEPTED.** F1/F2 fixed +
+empirically confirmed on llvmpipe (limits queried; CI validation actually
+active from run #7); F3 NaN guards in; F4 root-caused via probe bisection and
+fixed (NoContraction, CI #17, gates all-device); F5/F6/F8-F12 fixed or
+accepted (F7 no-op by design; judge perf item - f64 barrier - later removed).
+Full campaign record: `CHECKPOINT.md` (entries from 2026-09-08 onward).
+
 Severity: **H** = can produce wrong results or invalid API use on reachable inputs;
 **M** = weakens the verification net / silent divergence; **L** = latent, currently
 unreachable or cosmetic.
@@ -217,6 +224,9 @@ committed sizes; dispatch bounds guards in every shader; `fma_probe`
 discriminating constants; dump header format vs `oracle_dump.rs`.
 
 ## Recommended order of work
+
+*(Historical — executed 2026-09-08/09; outcomes and supersessions in
+CHECKPOINT.)*
 
 1. F1 + F2 together (limits query + validation package) — they mask each other.
 2. F3 (comparator NaN guards — five lines).

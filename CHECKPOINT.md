@@ -891,3 +891,29 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: M10-batch closed; remaining: monitor nothing - phase done. Repo green
   pending CI on this commit.
+
+## 2026-09-09 — judge pass #4: routing/batch-close verified; docs synced (this entry)
+
+- Done: Verified d54ad86 + 3a70ab9 independently: read routing const/doc
+  (comparator+protocol+margin all present), ran the decisive row myself at
+  4.19MP (rustCPU 5537 ms vs GPU 1124 ms single-run, scores equal to each
+  other AND to the golden 2.99412696) - the 0.5 MP threshold sits on the
+  GPU-winning side of both committed calibration runs (crossover 0.40-0.45MP
+  vs in-binary CPU; 8.3MP kept as the distinct oracle-competitiveness point);
+  cli_parity pins --gpu where GPU coverage matters (no weakened gate - pins
+  make engine intent explicit); cli_routing 5 cases cover both threshold
+  sides, byte-for-byte engine equality, note-on/note-off, flag exclusivity,
+  score-many unrouted. Local re-run: 26/26 + clippy -D clean; CI #28 green
+  (supersedes the "pending CI" line of the previous entry).
+  Docs synced: fable-plan status line (was "no code changes made, awaiting
+  approval" - 28 CI runs and a shipped port later), §16 M10 comparator fixed
+  + M10-batch added with its closure, Phase H marked CLOSED with the two-
+  crossovers separation, §18 marked executed (native MSYS2, not WSL2);
+  BUG_HUNT.md headed "all 12 closed" with its stale recommendation block
+  marked historical. README/AGENTS/addendum/CHECKPOINT found current.
+- Deviated from plan: none. Noted for the record: transient doc-ahead-of-code -
+  README said "(wired: 500k px)" in 3a70ab9, one commit before the wiring
+  landed (self-corrected by d54ad86; no action needed).
+- Blocked / open question: none.
+- Next: none - repo green at d54ad86, docs and plan in sync with the shipped
+  state. Phase-H-era work is fully closed; anything further is new scope.

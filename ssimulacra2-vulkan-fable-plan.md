@@ -1,6 +1,10 @@
 # SSIMULACRA2 Vulkan Port — Fable Method Plan
 
-**Status:** Proposed implementation plan; no code changes made. Awaiting human approval.
+**Status:** EXECUTED AND CLOSED through M10-batch (2026-09-09): M0-M9 done
+(Phases A-G), Phase H adjudicated (option (a) for the single-pair CLI),
+M10-batch shipped and closed (caching + 0.5 MP routing). Per-milestone exit
+observations live in `CHECKPOINT.md`; CI green through run #28. This document
+is the approved plan of record - read it with the Phase H annotations below.
 
 **Scope:** Port the repository's SSIMULACRA2 v2.1 CPU implementation (`src/ssimulacra2.cc` +
 vendored libjxl pieces) to a Vulkan compute backend, with the C++ implementation kept as the
@@ -324,7 +328,7 @@ harness skeleton.
 **Exit observation:** CI green on lavapipe; local real-GPU run green; fallback exercised by
 device-forcing test.
 
-### Phase H — Performance (plan revision approved by human 2026-09-08)  → M9 done, M10 open
+### Phase H — Performance (plan revision approved by human 2026-09-08)  → M9 done; M10 adjudicated (a); M10-batch CLOSED 2026-09-09
 M9 delivered (per-process timings, big GPU ~2.3x slower than oracle) and two post-M9
 findings shape this revision: (a) removing the 4 f64 muls/pixel from maps_combine changed
 wall time NOT AT ALL (launch/sync-bound, CI #20 confirmed correctness) — arithmetic is
@@ -429,6 +433,21 @@ is itself the finding.
 Original levers still apply: RGBA-packed planes and precomputed-reference/fast-ssim2
 caching remain candidates after profiling, behind the same gates. No optimization
 before M6 parity — already satisfied.
+
+- **PHASE H + BATCH CLOSED (2026-09-09; full record in CHECKPOINT):** human
+  accepted option (a) for the single-pair CLI (big 1.18-1.33x, photo 9-13x —
+  context-init is structural at one process per pair; verdict recorded, not
+  re-based). Batch round 1 shipped (6533a3c, CI #27): original-pyramid
+  caching, single-shot == fused == split bit-exact over the corpus, 4K A/B
+  836 vs 1038 ms/img = 19.5% — accepted as the measured ceiling after the
+  27% figure was traced to a pipeline-share-vs-wall-share unit error.
+  Routing wired at GPU_ROUTE_MIN_PIXELS=500_000 (d54ad86, CI #28) against
+  the correct comparator (in-binary CPU engine; measured crossover
+  0.40-0.45 MP via bench/routing_calib.py). The 8.3 MP figure is kept as a
+  DISTINCT number: GPU-vs-C++-oracle competitiveness, not routing — the
+  two-crossovers separation is pinned in README, main.rs const doc, and
+  AGENTS 4.5 (numbers-carry-comparator rule). Pipelining/daemon parked at
+  H4 status (opt-in on product request only). No open levers.
 
 ---
 
@@ -579,7 +598,17 @@ M6  Norms + weighted sum + final-score parity (≤1e-5; identity ==100)   (Phase
 M7  Alpha/gray/odd-size/small-image/near-cutoff matrix green            (Phase G)
 M8  CLI + CI + CPU fallback integrated                                  (Phase G)
 M9  Performance profile completed                                       (Phase H)
-M10 Optimized path beats measured CPU baseline on chosen workloads      (Phase H)
+M10 Optimized path beats the C++ ORACLE on chosen workloads       (Phase H;
+    comparator fixed by human review 2026-09-09 - NOT the slower Rust CPU
+    path). Adjudicated: option (a) accepted - single-pair CLI NOT met,
+    structural (context-init ~190 ms/process; big 1.18-1.33x, photo 9-13x).
+    Recorded, no goalpost move.
+M10-batch Shared-original batch beats oracle per-image at production
+    resolution (addendum ssimulacra2-vulkan-batch-addendum.md). CLOSED
+    2026-09-09: original-pyramid caching three-way bit-exact (CI #27),
+    4K A/B 19.5% accepted (27% target superseded - unit error); single-pair
+    CLI routing wired at 0.5 MP vs the in-binary CPU engine (CI #28,
+    bench/routing_calib.py); --gpu override; pipelining parked H4-style.
 ```
 
 M5+M6 are the critical functional pair: at M6 there is a useful Vulkan SSIMULACRA2 even with
@@ -607,6 +636,9 @@ from evidence, not from this table.
 ---
 
 ## 18. First Actions
+
+*(Executed 2026-09-08 — oracle builds NATIVELY on MSYS2 ucrt64 on this host,
+not WSL2; every step below is done, results in CHECKPOINT M0+. Text kept verbatim.)*
 
 ```text
 1. Build the C++ oracle in WSL2 (or CI container); confirm README deps suffice.
