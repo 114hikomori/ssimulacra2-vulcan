@@ -44,7 +44,7 @@ fn run_score_many(args: &[String], t_start: std::time::Instant) {
             "--profile" => profile_on = true,
             other => {
                 eprintln!("score-many: unexpected argument {other}");
-                eprintln!("Usage: ssimulacra2-vulkan score-many --orig <orig.png> --vars <dir> [--no-cache] [--profile]");
+                eprintln!("{USAGE}");
                 std::process::exit(1);
             }
         }
@@ -161,11 +161,32 @@ fn score_pair(
     prof.time("score", || score(&scales))
 }
 
+/// Single source of truth for CLI discoverability: a sibling project
+/// concluded "batch isn't in this binary's CLI" because the old usage line
+/// only showed the single-pair form. Keep every mode listed here.
+const USAGE: &str = "\
+SSIMULACRA 2.1 (Vulkan port)
+Usage (single pair, engine auto-routed at 0.5 MP):
+  ssimulacra2-vulkan [--cpu|--gpu] [--profile] original.png distorted.png
+Usage (batch: one original vs a directory of same-size variants,
+original-side preprocessing cached across the batch):
+  ssimulacra2-vulkan score-many --orig <original.png> --vars <dir> [--no-cache] [--profile]
+Flags:
+  --cpu / --gpu   force an engine for the single-pair path (mutually exclusive)
+  --no-cache      (score-many) same variants through the uncached path - the
+                  fair baseline the caching win is measured against
+  --profile       per-stage wall-time breakdown on stderr
+  --help, -h      this text";
+
 fn main() {
     let t_start = std::time::Instant::now();
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("score-many") {
         run_score_many(&args, t_start);
+        return;
+    }
+    if args.iter().skip(1).any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
         return;
     }
     let mut force_cpu = false;
@@ -186,8 +207,7 @@ fn main() {
     }
     let mut prof = Profile::enabled(profile_on);
     if pos.len() != 2 {
-        eprintln!("SSIMULACRA 2.1 (Vulkan port)");
-        eprintln!("Usage: ssimulacra2-vulkan [--cpu|--gpu] [--profile] original.png distorted.png");
+        eprintln!("{USAGE}");
         std::process::exit(1);
     }
     let a = match prof.time("decode", || decode_png(&pos[0])) {

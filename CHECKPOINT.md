@@ -917,3 +917,23 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: none - repo green at d54ad86, docs and plan in sync with the shipped
   state. Phase-H-era work is fully closed; anything further is new scope.
+
+## 2026-09-09 — M10-batch follow-up: CLI discoverability fix + sibling-repo integration verdict
+- Done: compare-image repo evaluated --gpu integration on their per-pair pool
+  (6-11MP images, 16-way concurrent C++ baseline = 0.74 s/pair effective) and
+  declined it. Their regression claim REPRODUCED independently here: 11MP
+  --gpu x4 -> all pairs ERROR_OUT_OF_DEVICE_MEMORY -> silent CPU fallback ->
+  6.06 s/pair (x2 = 1.24 clean; 4K x4 = 0.88 clean -> VRAM wall sits between
+  8.3 and 11 MP at x4). Their "batch/daemon is not in this CLI build, only a
+  lib" claim was WRONG about the build (score-many present since 6533a3c) -
+  root cause was OURS: usage/--help only advertised the single-pair form.
+  Fixed: USAGE const lists both modes, --help/-h exits 0 with it, bad-args
+  and score-many errors print the same text; regression test
+  usage_apis_advertise_batch_mode asserts both discovery paths name
+  score-many. 27/27, clippy -D clean. bench/conc_probe*.py kept as the
+  concurrency repro (fixtures gitignored).
+- Deviated from plan: none (follow-up work inside closed M10-batch scope).
+- Blocked / open question: none. Verdict for GPU-unfriendly per-pair pools:
+  SSIMULACRA2 stays on their CPU; score-many is the only GPU door, and only
+  for shared-original workloads (codec sweeps).
+- Next: nothing pending; repo green.

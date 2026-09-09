@@ -48,6 +48,8 @@ target/release/ssimulacra2-vulkan original.png distorted.png
   GPU path fails mid-run, the CLI falls back to the CPU engine automatically.
 - `--profile` appends a per-stage wall-time breakdown (decode, front-end prep,
   every GPU stage, readback, norms, submit-wait, RESIDUAL) to stderr.
+- `--help` / `-h` prints the full usage covering both modes (single-pair and
+  batch — the CLI advertises every mode it actually has).
 
 Batch mode — one original against many variants, with the original-side
 preprocessing cached across the batch:

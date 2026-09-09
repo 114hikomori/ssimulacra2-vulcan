@@ -66,6 +66,19 @@ fn engine_flags_are_exclusive() {
 }
 
 #[test]
+fn usage_apis_advertise_batch_mode() {
+    // Regression: a sibling project read the old one-line usage and concluded
+    // "batch isn't in this binary's CLI". Both discovery paths must name
+    // score-many from now on.
+    let h = run(&["--help"]);
+    assert!(h.0, "--help must exit 0");
+    assert!(h.1.contains("score-many"), "--help stdout hides batch: {}", h.1);
+    let u = run(&[]);
+    assert!(!u.0, "no-args must exit nonzero");
+    assert!(u.2.contains("score-many"), "usage stderr hides batch: {}", u.2);
+}
+
+#[test]
 fn score_many_stays_gpu_always_below_threshold() {
     // A tiny-original batch must NOT route: score-many builds its own context.
     // Three same-size (128x96) variants vs the photo original, one line each,
