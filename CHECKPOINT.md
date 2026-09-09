@@ -756,3 +756,27 @@ list owns the ids.
   ~170, readback ~120, decode+prep ~150, norms/upload/norm-residual ~140.
 - Next: quiet-machine stage profile, then pick H4/H5 vs escalating the
   validation decision early; push this per standing grant.
+
+## 2026-09-08 — validation opt-in + release probe-skip; CORRECTION to my H6 premise
+
+- Done: context.rs: validation now loads in debug (unchanged) OR when
+  S2V_VALIDATION=1 in ANY build (release dev-investigation opt-in, observable
+  via the device line); fma_probe runs only in debug-or-opted-in (release CLI
+  has no fma_ieee consumer - verified by grep). Battery: 19/19 + 0 hazards +
+  clippy clean + 12/12 fixtures byte-identical (release & debug).
+  CORRECTION (surfaced surprise): my H6 note attributed photo's ~190 ms
+  context-init to the validation layer. That was WRONG - release builds have
+  had cfg!(debug_assertions)=false => validation OFF for ALL my Phase-H
+  measurements. The ~190 ms is intrinsic Vulkan instance/device creation (+the
+  fma probe, ~30 ms, now skipped in release). Photo quiet-batch re-measure:
+  gpu 0.389 vs oracle 0.031 (device-creation-bound); big 0.963 vs oracle 0.813
+  same batch. So there was no validation tax to remove; the real remaining
+  big levers are decode+prep fusion and teardown-skip, and photo's floor is
+  device creation (~190 ms), not something a flag fixes.
+- Deviated from plan: this supersedes the 'H6 validation decision' item -
+  no such decision is needed (it was already off); replaced by an H6 decision
+  on whether small images should route to the CPU path (they cannot amortize
+  ~190 ms device init) - needs the human.
+- Blocked / open question: none.
+- Next: two pre-approved levers (decode-fuse LUT; process::exit after flushing
+  stdout, guarded - no output file here, only println, so flush-then-exit).

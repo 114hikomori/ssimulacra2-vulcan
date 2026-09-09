@@ -103,7 +103,11 @@ impl VkContext {
 
         let mut layer_names: Vec<&'static CStr> = vec![];
         let mut validation = false;
-        if cfg!(debug_assertions) {
+        // Debug builds (cargo test, CI) hard-code validation on - no user
+        // switch, so a VUID violation can never hide in a test run. Release
+        // (production/bench) is off by default; S2V_VALIDATION=1 opts back in
+        // for local investigation of the shipped binary.
+        if cfg!(debug_assertions) || std::env::var("S2V_VALIDATION").as_deref() == Ok("1") {
             let avail = unsafe { entry.enumerate_instance_layer_properties() }
                 .map_err(|e| format!("layers: {e:?}"))?;
             let want = cstr(b"VK_LAYER_KHRONOS_validation\0");
@@ -223,10 +227,18 @@ impl VkContext {
     /// correctly-rounded IEEE fma cannot reproduce the oracle's SIMD MulAdd
     /// bit-for-bit, so ulp-level parity tests must not gate on it.
     fn with_probe(mut self) -> Self {
-        self.fma_ieee = self.fma_probe().unwrap_or_default();
-        if cfg!(debug_assertions) {
+        // The probe builds + submits a pipeline (one submit/fence round-trip).
+        // Only debug consumers read fma_ieee() (the parity tests); production
+        // release skips it. An S2V_VALIDATION=1 dev run gets the probe too, so
+        // its printed fma_ieee is real rather than the false default.
+        if cfg!(debug_assertions) || self.validation {
+            self.fma_ieee = self.fma_probe().unwrap_or_default();
+        }
+        if cfg!(debug_assertions) || self.validation {
             // F2 (BUG_HUNT): make the validation state visible in CI logs -
-            // a silently-absent layer once hid a real VUID violation.
+            // a silently-absent layer once hid a real VUID violation. Also
+            // printed in release when S2V_VALIDATION=1 opted in, so the
+            // opt-in is observable rather than silently loading a layer.
             eprintln!(
                 "vulkan: device='{}' validation={} fma_ieee={} max_groups_x={}",
                 self.device_name, self.validation, self.fma_ieee, self.max_groups_x
