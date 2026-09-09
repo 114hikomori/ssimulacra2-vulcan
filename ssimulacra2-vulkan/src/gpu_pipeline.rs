@@ -161,6 +161,11 @@ pub fn compute_ssimulacra2_gpu_profiled(
         });
         scales.push(sn);
     }
+    // Residual hunt: the guard drop (~50 vkDestroyBuffer/FreeMemory + their
+    // bookkeeping) ran after every stage and before the fn returned - real
+    // in-wall time attributed to nothing. Measure it explicitly; the drop
+    // order is unchanged (same work, same point, just timed).
+    prof.time("teardown", || drop(g));
     Ok(scales)
 }
 

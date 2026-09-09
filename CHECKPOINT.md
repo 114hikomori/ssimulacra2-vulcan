@@ -780,3 +780,29 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: two pre-approved levers (decode-fuse LUT; process::exit after flushing
   stdout, guarded - no output file here, only println, so flush-then-exit).
+
+## 2026-09-09 — H6 input complete: residual closed (teardown 62 ms), protocol pinned, plan corrected
+
+- Done: Per human review (rejected M10 re-basing on Rust CPU - bar stays the
+  C++ oracle; Rust-vs-GPU kept as supplementary fact only; photo claim scoped
+  to the 1-process CLI architecture, not eternal; decode-fusion-alone
+  rejected as risk-without-victory). Instrumented BufGuard drop as 'teardown':
+  62 ms - the biggest residual component, now attributed; in-main RESIDUAL
+  43 ms = 3.8% (< 5% H0 gate, coverage rule satisfied); pre/post-main ~37 ms.
+  Retrospective: the earlier failed exit-skip A/B tested the wrong scope (the
+  guard drops inside the pipeline fn, long before the late process::exit), so
+  'teardown not worth skipping' was NOT what it measured - the guard's 62 ms
+  remains a genuine (if modest) future target via churn reduction.
+  Plan updated: FINAL protocol = cold-machine per-impl MIN-of-5 batch; warm
+  interleaved = dev iteration only; prep 96-vs-128 delta documented as
+  warm-vs-cold cache conditions; remaining identified levers: buffer-churn
+  (~100-150 ms est, at/below this host's batch noise) and H4 blur tiles (only
+  GPU-side headroom, highest risk, bit-exact-or-fail).
+  Battery on instrument change: 19/19 + 0 hazards + clippy -D clean + spot
+  fixtures byte-identical.
+- Deviated from plan: none (this entry executes the human's corrected brief).
+- Blocked / open question: H6 verdict choice is the human's: (a) accept
+  big=1.18-1.32x oracle (cold batches) as the measured gap and close Phase H,
+  or (b) invest in churn-reduction + H4 with honest odds of reaching ~0.85 vs
+  ~0.81 (likely tie, not clear win, within measurement noise).
+- Next: awaiting the (a)/(b) decision; repo green at this commit.

@@ -346,7 +346,10 @@ is itself the finding.
   elements - yet 8-bit PNG inputs are only k/255, so a 256-entry table computed by
   the SAME function is bit-identical by construction. Measurement-protocol finding:
   laptop wall times swing up to 1.6x between batches (thermal/all-core oracle
-  interleaving) - M10 gate = MIN of >=5 runs per impl, same session, plus
+  interleaving) - DEV-ITERATION protocol = warm same-session per-impl MIN of >=5
+  alternating runs (fast A/B); FINAL M10 adjudication = COLD-machine batch (see
+  the M10 definition below; a laptop swings ~150 ms batch-to-batch, larger than
+  the remaining levers, so only a cold batch can decide the bar), plus
   M9's 0.82 s oracle number NOT reproducible this session (measured 1.13-1.46 s);
   M10 compares against the FRESH same-session oracle measurement, not the old one.
 - **Lever ranking per data (reorders H1-H5; M10 re-checked after each):**
@@ -395,12 +398,34 @@ is itself the finding.
   MIN of >=5 runs each — the H0 protocol finding, not median-of-interleaved).
   If already met, remaining H-steps are skipped, not "polished"
   (human point 3). Non-goal list (f16, multi-GPU, GPU decode/ICC/GPU norms) unchanged.
-- **M10 definition (photo semantics fixed now — human point 5):** PASS = big GPU beats
-  big oracle in the final same-session table AND photo GPU is not worse than photo
-  oracle by more than 10%; a photo loss beyond 10% is an unresolved gap reported for
-  human decision — never silently accepted because big won. All correctness gates
-  (RDNA2 bit-exact dumps, all-device identity asserts, llvmpipe sanity bars) must be
-  green on both devices; no tolerance may move.
+- **M10 definition (unchanged bar; protocol pinned by human 2026-09-09):** PASS =
+  big GPU beats big C++ oracle (the reference is NOT to be re-based onto the
+  slower Rust CPU path - that would be moving the goalposts; Rust-vs-GPU numbers
+  may be reported as supplementary facts only). FINAL adjudication protocol =
+  COLD-machine, same-session, per-impl MIN-of-5 alternating batch; warm
+  interleaved runs are dev-iteration A/B only (batch-to-batch swings of
+  ~150 ms on this laptop exceed the remaining lever sizes, so warm numbers
+  cannot decide M10). Photo clause: photo GPU is not worse than photo oracle
+  by >10% - structurally unreachable in the current 1-process-per-image CLI
+  (vkCreateInstance+Device alone ~190 ms on this driver vs 31 ms total oracle;
+  a future batch/daemon mode reusing one VkDevice could change this - the
+  claim is scoped to the architecture, not eternal). Any photo loss is an
+  unresolved gap reported for human decision, never silently accepted. All
+  correctness gates (RDNA2 bit-exact dumps, all-device identity asserts,
+  llvmpipe sanity bars, committed validate_sync) must stay green; no
+  tolerance moves.
+- **Measurement-condition record (so numbers don't look like regressions):**
+  prep reads ~96 ms warm (H3 batch) vs ~116-128 ms cold - same code, cache/I/O
+  conditions differ; stage numbers are only comparable within a batch type.
+- **H6 residual, closed:** instrumented "teardown" (BufGuard drop ~62 ms) +
+  pre/post-main ~37 ms -> in-main RESIDUAL now 3.8% (< 5% gate, H0 coverage
+  rule satisfied). The exit-skip A/B earlier tested the wrong scope (guard
+  drops inside the pipeline fn, before any late process::exit) - lesson
+  recorded in CHECKPOINT. Remaining identified levers if the human wants to
+  keep pushing: buffer-churn reduction (create/destroy ~72 device buffers +
+  upload staging churn; est. ~100-150 ms) and H4 blur tiles (the only lever
+  with GPU-side headroom, highest risk, bit-exact-or-fail). Decode-LUT fusion
+  alone is NOT worth its invasiveness (would still land ~0.88 vs ~0.81 oracle).
 Original levers still apply: RGBA-packed planes and precomputed-reference/fast-ssim2
 caching remain candidates after profiling, behind the same gates. No optimization
 before M6 parity — already satisfied.
