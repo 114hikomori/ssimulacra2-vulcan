@@ -175,9 +175,84 @@ fn alpha_inputs_are_rejected_not_flattened() {
         d.to_str().unwrap(),
         "tests/fixtures/alpha_orig.png",
     ]);
-    assert!(!ok, "alpha must be rejected");
+    assert!(!ok, "real transparency must be rejected");
     assert!(e.contains("per-pair"), "message must route alpha: {e}");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn fully_opaque_rgba_is_stripped_score_neutral_and_clean() {
+    // The sibling engine's corpus: RGBA originals with A=255 everywhere.
+    // Stripping a zero-information channel is lossless - proven end to end
+    // by score equality against the raw per-pair pass (which blends a no-op
+    // worst-of-bg at alpha=1.0 and must land on the same %.8f).
+    let d = tmpdir("opaque");
+    let (ok, _, e) = run(&[
+        "normalize",
+        "--out",
+        d.to_str().unwrap(),
+        "tests/fixtures/opaque_orig.png",
+        "tests/fixtures/opaque_dist.png",
+    ]);
+    assert!(ok, "opaque RGBA must be accepted: {e}");
+    let raw = run(&["tests/fixtures/opaque_orig.png", "tests/fixtures/opaque_dist.png"]);
+    let norm = run(&[
+        d.join("opaque_orig.png").to_str().unwrap(),
+        d.join("opaque_dist.png").to_str().unwrap(),
+    ]);
+    assert!(raw.0 && norm.0, "{:?}", (raw.2, norm.2));
+    assert_eq!(raw.1, norm.1, "opaque strip moved the score");
+    // stripped output is plain truecolor with only structural chunks
+    let (chunks, depth, ctype, w, h) = png_chunks(&d.join("opaque_orig.png"));
+    assert_eq!((depth, ctype, w, h), (8, 2, 128, 96), "stripped header");
+    let names: Vec<&str> = chunks.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.iter().all(|n| matches!(*n, "IHDR" | "IDAT" | "IEND")),
+        "extra chunks: {names:?}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pixel_neutral_chunks_are_ingested_and_stripped_iccp_stays_fatal() {
+    // gAMA/cHRM on input: accepted by normalize, and the OUTPUT is
+    // byte-identical to normalizing the plain twin - the chunks never
+    // reach the score. iCCP (a pixel-remap claim) stays fatal everywhere.
+    let a = tmpdir("gama");
+    let b = tmpdir("plain");
+    let (ok, _, e) = run(&[
+        "normalize",
+        "--out",
+        a.to_str().unwrap(),
+        "tests/fixtures/gama_orig.png",
+    ]);
+    assert!(ok, "gAMA/cHRM must be ingested: {e}");
+    let (ok, _, e) = run(&[
+        "normalize",
+        "--out",
+        b.to_str().unwrap(),
+        "tests/fixtures/photo_orig.png",
+    ]);
+    assert!(ok, "{e}");
+    assert_eq!(
+        std::fs::read(a.join("gama_orig.png")).unwrap(),
+        std::fs::read(b.join("photo_orig.png")).unwrap(),
+        "gAMA input must normalize to the exact bytes the plain input produces"
+    );
+    let (ok, _, e) = run(&[
+        "normalize",
+        "--out",
+        a.to_str().unwrap(),
+        "tests/fixtures/icc_orig.png",
+    ]);
+    assert!(!ok, "iCCP must stay fatal");
+    assert!(e.contains("iCCP"), "unexpected message: {e}");
+    // ...and the scoring path's documented strictness is unchanged:
+    let (ok, _, _) = run(&["--gpu", "tests/fixtures/gama_orig.png", "tests/fixtures/gama_orig.png"]);
+    assert!(!ok, "scoring path must still reject gAMA (normalize is the ingest door)");
+    for p in [&a, &b] {
+        let _ = std::fs::remove_dir_all(p);
+    }
 }
 
 #[test]

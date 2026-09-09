@@ -77,11 +77,19 @@ target/release/ssimulacra2-vulkan normalize <input...> --out <dir>
 - Feeds metric caches so one normalized file serves GPU SSIMULACRA2 batch
   mode and DSSIM alike (designed with the sibling compare-image engine,
   ROUND9). Output is byte-deterministic; basename collisions are rejected.
-- Alpha inputs are **rejected, not flattened**: fixed-bg flattening is
-  neither the oracle's worst-of-bg semantics (alpha originals) nor the
-  bg=0.5 blend the single-pair path uses (alpha variants) — alpha-bearing
-  images must stay on the per-pair path. Grayscale inputs expand to RGB
-  without changing scores (tested).
+- Ingest domain is deliberately wider than the scoring domain: fully-opaque
+  RGBA has its zero-information alpha channel stripped (lossless — proven
+  score-neutral end to end); pixel-neutral gAMA/cHRM chunks are tolerated
+  and stripped (oracle and dssim both ignore them at scoring time). The
+  **scoring CLI's strict input contract is unchanged** — normalize is the
+  sanctioned ingest door. Fixtures + generator:
+  `oracle/gen_normalize_fixtures.py`.
+- Actual transparency and iCCP remain **rejected, not flattened**: fixed-bg
+  flattening is neither the oracle's worst-of-bg semantics (alpha originals)
+  nor the bg=0.5 blend the single-pair path uses (alpha variants), and iCCP
+  claims a pixel remap — alpha-bearing images route to the per-pair path
+  (`had_alpha` belongs in the engine's cache key). Non-PNG inputs must be
+  decoded to PNG by the caller first.
 
 ### Engine selection: two crossovers, don't conflate them
 

@@ -7,6 +7,7 @@ use crate::blur::{blur_planes_cpu, create_recursive_gaussian};
 use crate::maps::tothe4th;
 use crate::score::ScaleNorms;
 
+#[derive(Debug)]
 pub struct Decoded {
     pub w: usize,
     pub h: usize,
@@ -16,10 +17,20 @@ pub struct Decoded {
     pub alpha: Option<Vec<f32>>,
 }
 
-/// Minimal chunk scan for profile-bearing PNGs (iCCP/gAMA/cHRM/sRGB chunks).
-/// Returns Some(chunk_name) if a color-management chunk is present.
-pub fn png_profile_chunk(bytes: &[u8]) -> Option<&'static str> {
+/// Minimal chunk scan for profile-bearing PNGs (iCCP/gAMA/cHRM chunks).
+/// Returns Some(chunk_name) if a REJECTED chunk is present. iCCP is always
+/// fatal: it claims a pixel remap this CLI does not perform. gAMA/cHRM are
+/// only fatal for the scoring path (documented input domain); ingest mode
+/// (`decode_png_ingest`) tolerates them because every consumer in this
+/// ecosystem ignores them at scoring time - sibling-engine evidence,
+/// 2026-09-10: identical oracle scores with/without gAMA (84.76747002 both)
+/// and dssim likewise - so refusing them buys no correctness and makes the
+/// normalizer unable to read real decoder output.
+pub fn png_profile_chunk(bytes: &[u8], tolerate_pixel_neutral: bool) -> Option<&'static str> {
     for name in [b"iCCP".as_slice(), b"gAMA".as_slice(), b"cHRM".as_slice()] {
+        if tolerate_pixel_neutral && name[..2] != *b"iC" {
+            continue;
+        }
         // chunks appear after the 8-byte signature as [len u32be][type][data][crc]
         let mut pos = 8usize;
         while pos + 8 <= bytes.len() {
@@ -43,9 +54,29 @@ pub fn png_profile_chunk(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// True iff every alpha byte is exactly 255. Exact by construction: decode
+/// maps k to fl(k*r) with r = fl(1/255), and fl(255*r) == 1.0 exactly while
+/// round(fl(fl(k*r)*255)) == k for all k (verified exhaustively) - so no
+/// threshold fuzzing is needed and k=254 can never pass.
+pub fn alpha_is_fully_opaque(alpha: &[f32]) -> bool {
+    alpha.iter().all(|&v| v == 1.0f32)
+}
+
+/// Strict scoring-path decode: rejects iCCP/gAMA/cHRM (documented input
+/// domain) and leaves alpha handling to the blend/worst-of-bg pipeline.
 pub fn decode_png(path: &str) -> Result<Decoded, String> {
+    decode_png_opts(path, false)
+}
+
+/// Normalizer-ingest decode: additionally tolerates pixel-neutral
+/// gAMA/cHRM chunks (they are stripped on output); iCCP stays fatal.
+pub fn decode_png_ingest(path: &str) -> Result<Decoded, String> {
+    decode_png_opts(path, true)
+}
+
+fn decode_png_opts(path: &str, tolerate_pixel_neutral: bool) -> Result<Decoded, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
-    if let Some(chunk) = png_profile_chunk(&bytes) {
+    if let Some(chunk) = png_profile_chunk(&bytes, tolerate_pixel_neutral) {
         return Err(format!(
             "PNG carries a {chunk} chunk (color-managed input); this CLI supports \
              plain sRGB/gray/RGB PNGs - use the C++ oracle binary for profiled images"
@@ -335,4 +366,49 @@ pub fn compute_ssimulacra2_cpu(lin1: &[f32], lin2: &[f32], w: usize, h: usize) -
         scales.push(sn);
     }
     scales
+}
+
+#[cfg(test)]
+mod normalize_policy_tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        format!("{}/../tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name)
+    }
+
+    #[test]
+    fn opaque_detection_is_exact_on_the_grid() {
+        let r = 1.0f32 / 255.0f32;
+        let all_255: Vec<f32> = (0..64).map(|_| 255.0f32 * r).collect();
+        assert!(alpha_is_fully_opaque(&all_255));
+        let mut one_254 = all_255.clone();
+        one_254[7] = 254.0f32 * r;
+        assert!(!alpha_is_fully_opaque(&one_254), "k=254 must not pass as opaque");
+        // load-bearing exactness (see alpha_is_fully_opaque doc): 255*r == 1.0
+        assert_eq!(255.0f32 * r, 1.0f32);
+    }
+
+    #[test]
+    fn chunk_policy_gama_chrma_ingest_only_iccp_never() {
+        let strict = decode_png(&fixture("gama_orig.png"));
+        assert!(strict.is_err() && strict.unwrap_err().contains("gAMA"), "strict must reject gAMA");
+        let ing = decode_png_ingest(&fixture("gama_orig.png")).expect("ingest must tolerate gAMA/cHRM");
+        assert!(ing.alpha.is_none());
+        let icc = decode_png_ingest(&fixture("icc_orig.png"));
+        assert!(icc.is_err() && icc.unwrap_err().contains("iCCP"), "iCCP fatal even in ingest");
+        // plain file decodes identically under both policies
+        let a = decode_png(&fixture("photo_orig.png")).unwrap();
+        let b = decode_png_ingest(&fixture("photo_orig.png")).unwrap();
+        assert_eq!(a.srgb, b.srgb);
+    }
+
+    #[test]
+    fn opaque_rgba_fixtures_decode_and_detect() {
+        let d = decode_png(&fixture("opaque_orig.png")).expect("RGBA is a supported colortype");
+        let alpha = d.alpha.expect("opaque fixture carries an alpha plane");
+        assert!(alpha_is_fully_opaque(&alpha));
+        // real transparency must NOT pass the same gate
+        let t = decode_png(&fixture("alpha_orig.png")).expect("alpha fixture decodes");
+        assert!(!alpha_is_fully_opaque(&t.alpha.unwrap()), "transparent file passed opaque test");
+    }
 }

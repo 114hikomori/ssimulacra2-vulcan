@@ -960,3 +960,26 @@ list owns the ids.
 - Next: engine side may normalize .cache\decoded PNGs to truecolor/alpha-free/
   non-ICC once (helps both metrics, pre-satisfies memo requirements 1-2); no
   action in this repo until daemon phase is approved.
+
+## 2026-09-10 — normalize ingest-policy widening (engine corpus found the gap)
+- Done: sibling engine verified the shipped normalize against its REAL corpus
+  and it could ingest ~0% of it (all 45 originals are opaque-alpha RGBA; all
+  decoder output carries gAMA; sources include non-PNG). Fixed per their
+  evidence: (1) fully-opaque RGBA strips losslessly (fl(255*fl(1/255))==1.0
+  exact, exhaustively verified; k=254 cannot pass) - accept+strip; real
+  transparency still rejected. (2) gAMA/cHRM tolerated on ingest + stripped
+  on output: score-neutral proven by the engine (oracle 84.76747002 identical
+  with/without chunk; dssim same). iCCP stays fatal (pixel-remap claim).
+  (3) non-PNG: documented, decode-to-PNG precedes (no new dep). Scoring
+  path's strict decode_png contract UNCHANGED - normalize is the ingest door.
+  New fixtures (committed binaries) + generator oracle/gen_normalize_fixtures.py;
+  3 unit + 2 integration tests (opaque strip score-neutral vs raw per-pair,
+  byte-identical output for gAMA'd vs plain input, scoring-path strictness
+  asserted unchanged). 38/38 local, clippy -D clean, 12/12 goldens unchanged.
+- Deviated from plan: supersedes 759f54e's reject-ALL-alpha policy - the
+  strict rule was right about semantics but wrong about the corpus (opaque
+  RGBA carries zero information; rejecting it made the tool unable to accept
+  anything not already plain = dead by definition). ROUND9 "black-flatten"
+  remains declined for REAL transparency, unchanged.
+- Blocked / open question: none.
+- Next: push + CI; engine wiring -Ss2Gpu then unblocks for real.

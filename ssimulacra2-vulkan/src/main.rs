@@ -123,12 +123,13 @@ fn run_score_many(args: &[String], t_start: std::time::Instant) {
 /// repo): rewrite images as plain 8-bit truecolor RGB PNGs — the exact input
 /// domain both this CLI and DSSIM consume — with only IHDR/IDAT/IEND chunks.
 /// Pixel values are byte-exact: decode stores k as fl(k/255) and the grid
-/// recovery already proven in cpu.rs (H3 LUT) inverts it exactly. Alpha is
-/// REJECTED, not flattened: flatten-to-any-fixed-bg is neither the oracle's
-/// worst-of-bg semantics (originals) nor the bg=0.5 blend the per-pair path
-/// applies (variants) — a normalizer that silently picked a bg would change
-/// what is scored; callers must route alpha-bearing images to the per-pair
-/// path (they are the engine's had_alpha cache-key branch).
+/// recovery already proven in cpu.rs (H3 LUT) inverts it exactly. Policy:
+/// fully-opaque RGBA strips losslessly; REAL transparency is rejected (no
+/// fixed bg reproduces the oracle's worst-of-bg or the variant bg=0.5
+/// blend - alpha-bearing images stay on the per-pair path). gAMA/cHRM are
+/// tolerated on input and stripped on output (pixel-neutral; oracle + dssim
+/// both ignore them); iCCP - which claims a pixel remap - stays rejected
+/// everywhere. Non-PNG inputs must be decoded to PNG first by the caller.
 fn run_normalize(args: &[String]) {
     let mut out_dir: Option<String> = None;
     let mut inputs: Vec<String> = Vec::new();
@@ -150,19 +151,31 @@ fn run_normalize(args: &[String]) {
     }
     let mut seen = std::collections::HashSet::new();
     for inp in &inputs {
-        let dec = match decode_png(inp) {
+        // Ingest mode tolerates pixel-neutral gAMA/cHRM (their presence in real
+        // decoder output was making the tool unable to normalize anything not
+        // already plain; stripping is score-neutral - oracle + dssim both
+        // ignore those chunks). iCCP stays rejected here and everywhere.
+        let dec = match ssimulacra2_vulkan::cpu::decode_png_ingest(inp) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("normalize: {e}");
                 std::process::exit(1);
             }
         };
-        if dec.alpha.is_some() {
-            eprintln!(
-                "normalize: {inp} carries alpha; alpha-bearing images must route to \
-                 the per-pair path (fixed-bg flatten is not the oracle's semantics)"
-            );
-            std::process::exit(1);
+        if let Some(a) = &dec.alpha {
+            // Fully-opaque RGBA carries zero information in the alpha plane
+            // (byte 255 maps to exactly 1.0f32 - see cpu.rs
+            // alpha_is_fully_opaque), so stripping it is pixel-lossless.
+            // Real transparency is NOT flattened: no fixed bg reproduces the
+            // oracle's worst-of-bg (originals) or the bg=0.5 variant blend -
+            // such images must stay on the per-pair path.
+            if !ssimulacra2_vulkan::cpu::alpha_is_fully_opaque(a) {
+                eprintln!(
+                    "normalize: {inp} carries alpha; alpha-bearing images must route to \
+                     the per-pair path (fixed-bg flatten is not the oracle's semantics)"
+                );
+                std::process::exit(1);
+            }
         }
         let Some(name) = std::path::Path::new(inp)
             .file_name()
@@ -259,8 +272,8 @@ Usage (batch: one original vs a directory of same-size variants,
 original-side preprocessing cached across the batch):
   ssimulacra2-vulkan score-many --orig <original.png> --vars <dir> [--no-cache] [--profile]
 Usage (normalize: rewrite images as plain 8-bit truecolor RGB PNG, no
-color-management chunks, byte-exact pixels; alpha-bearing inputs are
-rejected - they must stay on the per-pair path):
+color-management chunks, byte-exact pixels. Strips fully-opaque alpha;
+rejects actual transparency and iCCP - route those to the per-pair path):
   ssimulacra2-vulkan normalize <input...> --out <dir>
 Flags:
   --cpu / --gpu   force an engine for the single-pair path (mutually exclusive)
