@@ -937,3 +937,26 @@ list owns the ids.
   SSIMULACRA2 stays on their CPU; score-many is the only GPU door, and only
   for shared-original workloads (codec sweeps).
 - Next: nothing pending; repo green.
+
+## 2026-09-09 — Option A field result (compare-image side)
+- Done: sibling engine ran the memo's Option A prototype on its own 144-image
+  corpus. End-to-end validation PASSED: per-original score-many x2 lanes, 0
+  fallbacks; drop-in engine-shaped CSV (no schema change); |delta| vs their
+  C++ tool 0.002-0.028 (v2.1 drift band, consistent with the 0.013 check).
+  TIMING (comparator: their C++ x16 pool, warm MIN-of-3, 144-image corpus):
+  GPU@2 400 vs CPU16 502 ms/pair = 1.25x steady-warm; ~break-even cold
+  (their first script confounded order-of-warmth; corrected by their own
+  re-run - honest measurement, matches this repo's warm-vs-cold discipline).
+  Within this repo's projected band (memo said ~0.55-0.65 s/pair vs 0.74,
+  i.e. 1.15-1.35x) - projection validated.
+- Deviated from plan: integration DEFERRED by the engine owner (marginal at
+  1.25x warm vs plumbing cost: alpha-strip + truecolor non-ICC re-encode of
+  ALL variants incl. jxl/avif + never co-run with -DssimGpu). Prototype kept
+  as validated scratch (.cache\bmk, gitignored there); no engine change made.
+- Blocked / open question: the daemon (parked round 2) is now product-wanted
+  - both sides name it as the tier where the win is real (~1.5-2x more).
+  Requires explicit phase approval + its own correctness suite (races/
+  ordering) before any code is written.
+- Next: engine side may normalize .cache\decoded PNGs to truecolor/alpha-free/
+  non-ICC once (helps both metrics, pre-satisfies memo requirements 1-2); no
+  action in this repo until daemon phase is approved.
