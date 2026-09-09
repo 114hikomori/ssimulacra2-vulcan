@@ -78,8 +78,9 @@ differ by an order of magnitude (conflating them produced the short-lived
 | Batch caching win | 19.5% (range 15.8-20.4%) at 4K, N=20 | same-process no-cache batch baseline | cold MIN-of-5, warmed file cache |
 
 Below the routing threshold the single-pair CLI runs the CPU engine (GPU
-per-process context-init + 6-scale overhead is not amortized; the CPU engine
-wins up to ~20x on tiny images). `score-many` is deliberately never routed:
+per-process context-init + 6-scale overhead is not amortized; at 0.15 MP the
+GPU is ~2x *slower* than the CPU engine — `--gpu`-pinned cold MIN-of-5, AMD RX
+6600M, `bench/routing_calib.py`). `score-many` is deliberately never routed:
 its context is built once per batch and the caching win is resolution-shared,
 so its math is per-batch, not per-pair. The original >=8MP proposal for
 routing was based on the oracle comparator, which the in-binary fallback does
