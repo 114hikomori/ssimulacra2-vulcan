@@ -73,9 +73,11 @@ fn usage_apis_advertise_batch_mode() {
     let h = run(&["--help"]);
     assert!(h.0, "--help must exit 0");
     assert!(h.1.contains("score-many"), "--help stdout hides batch: {}", h.1);
+    assert!(h.1.contains("normalize"), "--help stdout hides normalize: {}", h.1);
     let u = run(&[]);
     assert!(!u.0, "no-args must exit nonzero");
     assert!(u.2.contains("score-many"), "usage stderr hides batch: {}", u.2);
+    assert!(u.2.contains("normalize"), "usage stderr hides normalize: {}", u.2);
 }
 
 #[test]

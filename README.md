@@ -66,6 +66,23 @@ target/release/ssimulacra2-vulkan score-many --orig original.png --vars <dir> [-
 - Batch mode is deliberately never size-routed: the GPU context is built once
   per batch, so the small-image arithmetic does not apply.
 
+Normalize mode — rewrite images into the plain 8-bit truecolor PNG domain the
+metric paths require (byte-exact pixels; only IHDR/IDAT/IEND chunks; no ICC /
+gAMA / cHRM / sRGB):
+
+```
+target/release/ssimulacra2-vulkan normalize <input...> --out <dir>
+```
+
+- Feeds metric caches so one normalized file serves GPU SSIMULACRA2 batch
+  mode and DSSIM alike (designed with the sibling compare-image engine,
+  ROUND9). Output is byte-deterministic; basename collisions are rejected.
+- Alpha inputs are **rejected, not flattened**: fixed-bg flattening is
+  neither the oracle's worst-of-bg semantics (alpha originals) nor the
+  bg=0.5 blend the single-pair path uses (alpha variants) — alpha-bearing
+  images must stay on the per-pair path. Grayscale inputs expand to RGB
+  without changing scores (tested).
+
 ### Engine selection: two crossovers, don't conflate them
 
 Every number below is labeled with its comparator and protocol — the routing

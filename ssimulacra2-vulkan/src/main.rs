@@ -1,6 +1,7 @@
 // CLI: ssimulacra2-vulkan [--cpu|--gpu] [--profile] original.png distorted.png
 // CLI (batch): ssimulacra2-vulkan score-many --orig <original.png> --vars <dir>
 //              [--no-cache] [--profile]
+// CLI (normalize): ssimulacra2-vulkan normalize <input...> --out <dir>
 // Mirrors the C++ CLI contract: score %.8f on stdout; alpha inputs take the
 // worst of bg=0.1/bg=0.9; <8x8 rejected; GPU default with CPU fallback.
 // Single-pair default is size-ROUTED (GPU_ROUTE_MIN_PIXELS below); score-many
@@ -118,6 +119,92 @@ fn run_score_many(args: &[String], t_start: std::time::Instant) {
     std::process::exit(0);
 }
 
+/// Engine-side image normalizer for metric caches (ROUND9 design, sibling
+/// repo): rewrite images as plain 8-bit truecolor RGB PNGs — the exact input
+/// domain both this CLI and DSSIM consume — with only IHDR/IDAT/IEND chunks.
+/// Pixel values are byte-exact: decode stores k as fl(k/255) and the grid
+/// recovery already proven in cpu.rs (H3 LUT) inverts it exactly. Alpha is
+/// REJECTED, not flattened: flatten-to-any-fixed-bg is neither the oracle's
+/// worst-of-bg semantics (originals) nor the bg=0.5 blend the per-pair path
+/// applies (variants) — a normalizer that silently picked a bg would change
+/// what is scored; callers must route alpha-bearing images to the per-pair
+/// path (they are the engine's had_alpha cache-key branch).
+fn run_normalize(args: &[String]) {
+    let mut out_dir: Option<String> = None;
+    let mut inputs: Vec<String> = Vec::new();
+    let mut it = args[2..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--out" => out_dir = it.next().cloned(),
+            other => inputs.push(other.to_string()),
+        }
+    }
+    let (Some(out_dir), false) = (out_dir, inputs.is_empty()) else {
+        eprintln!("normalize requires --out <dir> and one or more input images");
+        eprintln!("{USAGE}");
+        std::process::exit(1);
+    };
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("normalize: {e}");
+        std::process::exit(1);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for inp in &inputs {
+        let dec = match decode_png(inp) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("normalize: {e}");
+                std::process::exit(1);
+            }
+        };
+        if dec.alpha.is_some() {
+            eprintln!(
+                "normalize: {inp} carries alpha; alpha-bearing images must route to \
+                 the per-pair path (fixed-bg flatten is not the oracle's semantics)"
+            );
+            std::process::exit(1);
+        }
+        let Some(name) = std::path::Path::new(inp)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+        else {
+            eprintln!("normalize: {inp} has no usable basename");
+            std::process::exit(1);
+        };
+        if !seen.insert(name.clone()) {
+            eprintln!("normalize: input basename collision: {name}");
+            std::process::exit(1);
+        }
+        let dst = std::path::Path::new(&out_dir).join(&name);
+        let n = dec.w * dec.h;
+        let mut rgb = vec![0u8; 3 * n];
+        for i in 0..n {
+            rgb[3 * i] = (dec.srgb[i] * 255.0f32).round() as u8;
+            rgb[3 * i + 1] = (dec.srgb[n + i] * 255.0f32).round() as u8;
+            rgb[3 * i + 2] = (dec.srgb[2 * n + i] * 255.0f32).round() as u8;
+        }
+        let res = (|| -> Result<(), String> {
+            let file = std::fs::File::create(&dst).map_err(|e| format!("create: {e}"))?;
+            let mut enc = png::Encoder::new(file, dec.w as u32, dec.h as u32);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header()
+                .map_err(|e| format!("header: {e}"))?
+                .write_image_data(&rgb)
+                .map_err(|e| format!("data: {e}"))?;
+            Ok(())
+        })();
+        if let Err(e) = res {
+            eprintln!("normalize: {inp} -> {}: {e}", dst.display());
+            std::process::exit(1);
+        }
+        println!("{inp} -> {}", dst.display());
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(0);
+}
+
 fn pipeline(
     ctx: Option<&ssimulacra2_vulkan::context::VkContext>,
     lin1: &[f32],
@@ -171,6 +258,10 @@ Usage (single pair, engine auto-routed at 0.5 MP):
 Usage (batch: one original vs a directory of same-size variants,
 original-side preprocessing cached across the batch):
   ssimulacra2-vulkan score-many --orig <original.png> --vars <dir> [--no-cache] [--profile]
+Usage (normalize: rewrite images as plain 8-bit truecolor RGB PNG, no
+color-management chunks, byte-exact pixels; alpha-bearing inputs are
+rejected - they must stay on the per-pair path):
+  ssimulacra2-vulkan normalize <input...> --out <dir>
 Flags:
   --cpu / --gpu   force an engine for the single-pair path (mutually exclusive)
   --no-cache      (score-many) same variants through the uncached path - the
@@ -183,6 +274,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("score-many") {
         run_score_many(&args, t_start);
+        return;
+    }
+    if args.get(1).map(|s| s.as_str()) == Some("normalize") {
+        run_normalize(&args);
         return;
     }
     if args.iter().skip(1).any(|a| a == "--help" || a == "-h") {
