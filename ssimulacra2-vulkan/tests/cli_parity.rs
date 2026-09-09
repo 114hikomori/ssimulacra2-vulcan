@@ -1,5 +1,6 @@
 // M7/M8: CLI parity vs the C++ oracle goldens (oracle/scores_prepatch.txt),
-// both GPU default and --cpu paths, plus rejection behaviors.
+// both engines (--gpu and --cpu pin them explicitly since the size-routing
+// default picks one), plus rejection behaviors.
 use std::process::Command;
 
 const GOLDEN: &[(&str, &str)] = &[
@@ -47,19 +48,20 @@ fn cli_gpu_and_cpu_match_goldens() {
             let bar = if extra.contains(&"--cpu") { 1e-5 } else { gpu_bar };
             assert!((g - w).abs() <= bar, "{mode} {pair}: {g} vs {w} (bar {bar:e})");
         };
-        f("gpu", &[]);
-        f("cpu", &["--cpu"]);
+        f("gpu", &["--gpu"]); // --gpu pins the engine: small fixtures route
+        f("cpu", &["--cpu"]); // to the CPU engine by default since 0.5MP routing
         println!("{pair}: gpu+cpu ok ({want})");
     }
 }
 
 #[test]
 fn cli_identity_and_rejections() {
-    let (ok, got) = run(&["tests/fixtures/photo_orig.png", "tests/fixtures/photo_orig.png"]);
+    let (ok, got) = run(&["--gpu", "tests/fixtures/photo_orig.png", "tests/fixtures/photo_orig.png"]);
     assert!(ok, "identity run failed");
     // Exact 100.00000000 on EVERY device since the F4 fix (NoContraction on
-    // the maps_combine ssim_d chain; CI #17: llvmpipe exact). Pre-fix this
-    // asserted IEEE-only with a 0.5 sanity bar elsewhere - BUG_HUNT.md F4.
+    // the maps_combine ssim_d chain; CI #17: llvmpipe exact). --gpu pins the
+    // GPU engine (photo is small enough to route to CPU by default); without
+    // a Vulkan device this exercises the CPU engine, which is also exact.
     assert_eq!(got, "100.00000000", "identity: {got}");
     let (ok, _) = run(&["tests/fixtures/s7_orig.png", "tests/fixtures/s7_dist.png"]);
     assert!(!ok, "sub-8x8 must be rejected");
@@ -78,7 +80,7 @@ fn cli_asymmetric_alpha_dispatch_matches_oracle() {
         ("alpha_orig", "gray_dist", -108.32956807f64),
     ];
     for (a, b, want) in cases {
-        for extra in [&[] as &[&str], &["--cpu"][..]] {
+        for extra in [&["--gpu"][..], &["--cpu"][..]] {
             let oa = format!("tests/fixtures/{a}.png");
             let ob = format!("tests/fixtures/{b}.png");
             let mut args: Vec<&str> = extra.to_vec();

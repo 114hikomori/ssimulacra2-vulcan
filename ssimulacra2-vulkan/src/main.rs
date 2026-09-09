@@ -1,14 +1,29 @@
-// CLI: ssimulacra2-vulkan [--cpu] [--profile] original.png distorted.png
+// CLI: ssimulacra2-vulkan [--cpu|--gpu] [--profile] original.png distorted.png
 // CLI (batch): ssimulacra2-vulkan score-many --orig <original.png> --vars <dir>
 //              [--no-cache] [--profile]
 // Mirrors the C++ CLI contract: score %.8f on stdout; alpha inputs take the
 // worst of bg=0.1/bg=0.9; <8x8 rejected; GPU default with CPU fallback.
+// Single-pair default is size-ROUTED (GPU_ROUTE_MIN_PIXELS below); score-many
+// is GPU-always (context-init is amortized over the batch - different math).
 use ssimulacra2_vulkan::cpu::{alpha_blend, compute_ssimulacra2_cpu, decode_png, to_linear};
 use ssimulacra2_vulkan::gpu_pipeline::{
     compute_ssimulacra2_gpu_profiled, list_variants, score_batch_paths, score_nocache_paths,
 };
 use ssimulacra2_vulkan::profile::Profile;
 use ssimulacra2_vulkan::score::{score, ScaleNorms};
+
+/// Below this pixel count the single-pair CLI runs the in-binary CPU engine
+/// instead of the GPU. COMPARATOR: this binary's `--cpu` engine (the one
+/// routing actually switches to) - NOT the C++ oracle. PROTOCOL: cold
+/// MIN-of-3 single-pair CLI, warmed file cache, per-process incl. context
+/// init; AMD RX 6600M, 2026-09-09, reproducible via `bench/routing_calib.py`
+/// (--gpu-pinned re-run, MIN-of-5, agrees): GPU/CPU = 1.44 @0.31MP,
+/// 0.81 @0.61MP, 0.68 @1.02MP, 0.23 @4.19MP -> crossover 0.40-0.45MP.
+/// The distinct C++-oracle crossover (0.84-0.93x @8.3MP,
+/// cold MIN-of-5 single-process) answers M10 competitiveness, not routing -
+/// see README "two crossovers". `--gpu` overrides this default; `--cpu`
+/// forces CPU either way.
+const GPU_ROUTE_MIN_PIXELS: usize = 500_000;
 
 /// M10-batch: N variants vs one shared original, original-side prep cached
 /// across the batch (round 1: caching only, no pipelining; batch CLI, not a
@@ -154,19 +169,25 @@ fn main() {
         return;
     }
     let mut force_cpu = false;
+    let mut force_gpu = false;
     let mut profile_on = false;
     let mut pos = Vec::new();
     for a in &args[1..] {
         match a.as_str() {
             "--cpu" => force_cpu = true,
+            "--gpu" => force_gpu = true,
             "--profile" => profile_on = true,
             _ => pos.push(a.clone()),
         }
     }
+    if force_cpu && force_gpu {
+        eprintln!("--cpu and --gpu are mutually exclusive");
+        std::process::exit(1);
+    }
     let mut prof = Profile::enabled(profile_on);
     if pos.len() != 2 {
         eprintln!("SSIMULACRA 2.1 (Vulkan port)");
-        eprintln!("Usage: ssimulacra2-vulkan [--cpu] [--profile] original.png distorted.png");
+        eprintln!("Usage: ssimulacra2-vulkan [--cpu|--gpu] [--profile] original.png distorted.png");
         std::process::exit(1);
     }
     let a = match prof.time("decode", || decode_png(&pos[0])) {
@@ -191,7 +212,16 @@ fn main() {
         eprintln!("Image size mismatch");
         std::process::exit(1);
     }
-    let ctx = if force_cpu {
+    // Engine routing (see GPU_ROUTE_MIN_PIXELS): single-pair only; score-many
+    // owns its context and stays GPU-always (amortized init).
+    let routed_cpu = !force_gpu && (a.w * a.h) < GPU_ROUTE_MIN_PIXELS;
+    let ctx = if force_cpu || routed_cpu {
+        if routed_cpu && !force_cpu {
+            eprintln!(
+                "note: {:.2} MP below routing threshold; CPU engine (--gpu to override)",
+                (a.w * a.h) as f64 / 1e6
+            );
+        }
         None
     } else {
         match prof.time("context-init", ssimulacra2_vulkan::context::VkContext::new) {
