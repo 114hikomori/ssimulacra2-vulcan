@@ -4,17 +4,65 @@
 
 This fork adds a Vulkan compute backend (`ssimulacra2-vulkan/`, Rust + ash) that
 reproduces the C++ reference bit-for-bit on IEEE-fma GPUs (see `CHECKPOINT.md`,
-`ssimulacra2-vulkan-fable-plan.md`). The C++ code above is unchanged and remains
-the correctness oracle.
+`ssimulacra2-vulkan-fable-plan.md`). The C++ code in `src/` is unchanged and
+remains the correctness oracle.
+
+### Requirements
+
+- **Run/build the port:** a Vulkan 1.1+ driver (any dedicated or integrated
+  GPU; CI exercises Mesa `lavapipe`) and a stable Rust toolchain (edition
+  2021). No Vulkan SDK is needed to build; the SDK/validation layers are only
+  what the debug test runs enable.
+- **Build the C++ oracle (needed only by the test suite):** CMake + Ninja +
+  the deps listed by `build_ssimulacra`, or on Windows the MSYS2 UCRT64
+  commands in `oracle/README.md`. The prebuilt `build/ssimulacra2.exe` needs
+  `ucrt64/bin` on `PATH` (e.g. `C:\msys64\ucrt64\bin`) or it dies with a
+  missing-DLL status.
+- **Regenerate bench fixtures only:** Python with numpy + Pillow.
+
+### Build
 
 ```
-cargo build --release                      # workspace: ssimulacra2-vulkan CLI
-cargo test --workspace                     # parity suite (needs dumps, see below)
-target/release/ssimulacra2-vulkan original.png distorted.png   # size-routed engine
-target/release/ssimulacra2-vulkan --gpu a.png b.png   # force Vulkan path
-target/release/ssimulacra2-vulkan --cpu a.png b.png   # force CPU path
-target/release/ssimulacra2-vulkan score-many --orig orig.png --vars <dir> [--no-cache] [--profile]
+cargo build --release    # binary: target/release/ssimulacra2-vulkan(.exe)
 ```
+
+First run compiles the compute pipelines once per device and persists them to
+`<temp>/ssimulacra2-vulkan-pipeline-<device>.cache` (override:
+`S2V_PIPELINE_CACHE=<file>`), so shader-compile cost is not repeated.
+
+### CLI usage
+
+Single pair — the engine is chosen automatically by image size:
+
+```
+target/release/ssimulacra2-vulkan original.png distorted.png
+```
+
+- `>= 0.5 MP` → Vulkan GPU path (the measured crossover against the CPU
+  engine is ~0.40–0.45 MP; see the table under “Engine selection”).
+- `< 0.5 MP` → in-binary CPU engine: the per-process GPU context-init plus
+  six-scale pipeline is not amortized on small images. A one-line
+  `note: ... routing threshold` goes to **stderr**; **stdout stays score-only**.
+- `--gpu` forces the Vulkan path, `--cpu` forces the CPU engine (mutually
+  exclusive; combining them is an error). If no Vulkan device exists or the
+  GPU path fails mid-run, the CLI falls back to the CPU engine automatically.
+- `--profile` appends a per-stage wall-time breakdown (decode, front-end prep,
+  every GPU stage, readback, norms, submit-wait, RESIDUAL) to stderr.
+
+Batch mode — one original against many variants, with the original-side
+preprocessing cached across the batch:
+
+```
+target/release/ssimulacra2-vulkan score-many --orig original.png --vars <dir> [--no-cache] [--profile]
+```
+
+- `<dir>` is a directory of variant PNGs, same pixel size as the original;
+  the original must be alpha-free (rejected otherwise rather than silently
+  changing what gets cached). Output: one `<name> <score>` line per variant.
+- `--no-cache` runs the same variants through the uncached single-shot path
+  in one process — the fair baseline the caching win is measured against.
+- Batch mode is deliberately never size-routed: the GPU context is built once
+  per batch, so the small-image arithmetic does not apply.
 
 ### Engine selection: two crossovers, don't conflate them
 
@@ -38,18 +86,68 @@ routing was based on the oracle comparator, which the in-binary fallback does
 not match (it is ~6x slower than the C++ oracle) — see CHECKPOINT
 2026-09-09 / batch addendum for the full correction.
 
-CLI contract matches the C++ tool: score `%.8f` on stdout, `-inf..100`, alpha
-inputs take the worst of backgrounds 0.1/0.9 (only when the *original* has
-alpha), minimum size 8x8. Input domain: plain 8-bit RGB/RGBA/Grayscale PNGs;
-images carrying iCCP/gAMA/cHRM chunks are rejected with a pointer to the C++
-binary (ICC handling is a documented non-goal). No Vulkan device or GPU failure
-falls back to the CPU path automatically.
+### Input contract and limits
 
-Before `cargo test` on a fresh clone, generate the oracle dumps the parity
-tests read (they are gitignored): build the C++ oracle with
-`-DSSIMULACRA2_DUMPS` into `build-dump/` and run `oracle/gen_goldens.sh run1`
-(see `oracle/README.md` for the exact commands on Windows/MSYS2 and Linux).
-CI does this automatically.
+The CLI mirrors the C++ tool: score `%.8f` on stdout, range `-inf..100`;
+notes/errors on stderr; exit ≠ 0 on unreadable input, sub-8x8 images, or an
+original/variant size mismatch. Alpha: when the *original* has alpha the
+score is the worst of backgrounds 0.1/0.9 (`ssimulacra2_main.cc:105-114`);
+if only the distorted image has alpha it is a single bg=0.5 pass. Input
+domain is plain 8-bit RGB/RGBA/Grayscale PNGs — images carrying iCCP/gAMA/
+cHRM chunks are rejected with a pointer to the C++ binary (color-management
+is a documented non-goal, along with float16 math, GPU-side decoding,
+multi-GPU scheduling and GPU-side norm pooling).
+
+### Running the test suite
+
+The parity tests read oracle dumps that are not committed. On a fresh clone:
+
+```
+# 1. build the C++ oracle twice: default (build/) and with -DSSIMULACRA2_DUMPS
+#    (build-dump/) - exact MSYS2/Linux commands in oracle/README.md
+# 2. generate dumps + per-fixture goldens:
+oracle/gen_goldens.sh run1
+# 3. run everything:
+cargo test --workspace
+```
+
+Debug/CI test runs execute with the Vulkan validation layer and sync-val
+enabled via the committed `vk_layer_settings.txt` (the loader picks it up from
+the CWD — repo root for CLI runs, crate dir for lib tests; copies live in
+both). Release runs skip validation; opt back in with `S2V_VALIDATION=1`.
+Numeric bars are device-gated by an fma-IEEE fingerprint (strict on real
+hardware, looser on software rasterizers) — a failing bar means find-the-
+cause, never widen-it (AGENTS.md §8).
+
+### Bench scripts
+
+```
+python bench/gen_4k.py                  # 3840x2160 pair -> bench/fixtures4k/
+python bench/gen_batch.py               # 4K original + 20 variants + calibration pairs
+python bench/routing_calib.py [--reps N]  # engine-routing crossover table
+```
+
+Generated fixtures are gitignored and regenerable. Every performance number
+published in this repo names its comparator and protocol (see the table
+above; standard protocol is cold MIN-of-N on a quiet machine with warmed OS
+file cache) — inherited bare numbers have produced three real defects
+(BUG_HUNT/CHECKPOINT).
+
+### Repository map
+
+```
+src/                  upstream C++ SSIMULACRA2 v2.1 (the oracle; unmodified numerics)
+ssimulacra2-vulkan/   the port: Rust + ash CLI, .comp shaders, test suite
+oracle/               golden scores + dump/score generation scripts (oracle/README.md)
+bench/                fixture generators + routing calibration
+tests/fixtures/       shared PNG corpus (also used by the C++ goldens)
+dumps/                generated oracle dumps (gitignored; see tests section)
+CHECKPOINT.md         append-only session state - read FIRST in any session
+AGENTS.md             working rules for agents editing this repo
+ssimulacra2-vulkan-fable-plan.md / _port-research.md / _batch-addendum.md
+                      execution plan / background research / batch phase spec
+BUG_HUNT.md           closed defect ledger (F1-F12)
+```
 
 Perceptual metric developed by Jon Sneyers (Cloudinary) in July-October 2022,
 updated in April 2023.
