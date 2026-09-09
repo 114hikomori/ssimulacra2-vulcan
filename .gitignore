@@ -15,3 +15,9 @@ dumps/
 
 # Serena MCP tool state — local tooling, not repo content
 .serena/
+
+# 4K benchmark fixtures (regenerable via bench/gen_4k.py)
+bench/fixtures4k/
+
+# Python bytecode (oracle/ + bench/ scripts)
+__pycache__/

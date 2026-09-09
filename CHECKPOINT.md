@@ -806,3 +806,33 @@ list owns the ids.
   or (b) invest in churn-reduction + H4 with honest odds of reaching ~0.85 vs
   ~0.81 (likely tie, not clear win, within measurement noise).
 - Next: awaiting the (a)/(b) decision; repo green at this commit.
+
+## 2026-09-09 — Batch addendum checklists run against the repo: 4K class added; measured result beats the model
+
+- Done: Human delivered confirmed production usage (1 true-4K original vs
+  30-40 variants/run) + addendum with two verification checklists; both run
+  now, in-repo, measured. Checklist 1: (a) prep/compare NOT separated -
+  gpu_pipeline.rs:86 runs both sides' whole scale chain per call; original-side
+  work is cleanly separable (per-scale downsample1/xyb1/m11/s11/mu1).
+  (b) caching win estimated from 4K --profile stage split: >=27% of per-image
+  wall as a CONSERVATIVE floor (submit-wait GPU time not credited); real A/B
+  deferred to the (unauthorized) refactor. Checklist 2: (a) CONFIRMED big is
+  a 2048^2 proxy (System.Drawing on the actual PNG), not 4K. (b) bench/
+  gen_4k.py generates a true 3840x2160 pair from the SAME gen_fixtures
+  content functions; fixtures gitignored (34MB), __pycache__ gitignored+
+  removed. (c) measured both sides cold MIN-of-5, file cache warmed: GPU
+  1.697s vs oracle 1.827s = 0.93, second batch 0.84 (1.544 vs 1.830);
+  same-batch 2048^2 control 1.33 confirms the crossover is between 2048^2
+  and 4K. Scores equal at %.8f (2.27761200 both). HEADLINE: at production
+  resolution the GPU is already parity-to-ahead SINGLE-PROCESS - the
+  addendum's serialized-daemon 'still loses per-image (~2.3x)' model was
+  built on photo-class numbers and the warm 0.91 '0.71s/image' claim was
+  warm-vs-cold confusion; M10-batch starts from a lead, caching is upside
+  not necessity. The 3.19s-first-oracle-run outlier is cold file cache
+  (17MB PNG), documented in the addendum's corrected table.
+- Deviated from plan: none (checklists executed as specified; two checklist
+  items legitimately blocked on the batch-phase implementation, marked so).
+- Blocked / open question: batch/daemon phase SPEC needs human approval built
+  on these measured numbers (prep/compare split + shared-batch A/B +
+  cached-vs-fresh bit-exactness assert + pipelining decision).
+- Next: awaiting batch-phase go; repo green.
