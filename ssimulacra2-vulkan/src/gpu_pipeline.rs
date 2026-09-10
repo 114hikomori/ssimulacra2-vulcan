@@ -474,6 +474,18 @@ fn linearize_front_end(
 /// compressed variants; an alpha-bearing original would need the worst-of-bg
 /// dual pass (two different preps) and is rejected here rather than silently
 /// changing what "the cached original" means.
+/// Batch alpha contract error, shared by every `score-many` entry point
+/// (cached batch, no-cache baseline, no-device CPU fallback): the contract is
+/// engine-independent and `--no-cache` must not silently accept what the
+/// default path rejects.
+pub const BATCH_ORIG_ALPHA_ERR: &str = "score-many requires an alpha-free \
+    original (the confirmed production pattern); alpha originals need the \
+    worst-of-bg dual pass and are not cached";
+
+pub fn batch_variant_alpha_err(vp: &str) -> String {
+    format!("variant {vp} has alpha; the batch path is alpha-free only")
+}
+
 pub fn score_batch_paths(
     ctx: &VkContext,
     orig_path: &str,
@@ -485,11 +497,7 @@ pub fn score_batch_paths(
         return Err("original below 8x8".into());
     }
     if orig.alpha.is_some() {
-        return Err(
-            "score-many requires an alpha-free original (the confirmed production \
-             pattern); alpha originals need the worst-of-bg dual pass and are not cached"
-                .into(),
-        );
+        return Err(BATCH_ORIG_ALPHA_ERR.to_string());
     }
     let w = orig.w;
     let h = orig.h;
@@ -502,7 +510,7 @@ pub fn score_batch_paths(
             return Err(format!("variant {vp} size {}x{} != original {w}x{h}", vd.w, vd.h));
         }
         if vd.alpha.is_some() {
-            return Err(format!("variant {vp} has alpha; the batch path is alpha-free only"));
+            return Err(batch_variant_alpha_err(vp));
         }
         let vlin = linearize_front_end(&vd, 0.5, prof);
         let scales = compare_prep_gpu(ctx, &orig_prep, &vlin, w, h, prof)?;
@@ -522,6 +530,12 @@ pub fn score_nocache_paths(
     prof: &mut crate::profile::Profile,
 ) -> Result<Vec<(String, f64)>, String> {
     let orig = prof.time("decode", || crate::cpu::decode_png(orig_path))?;
+    if orig.w < 8 || orig.h < 8 {
+        return Err("original below 8x8".into());
+    }
+    if orig.alpha.is_some() {
+        return Err(BATCH_ORIG_ALPHA_ERR.to_string());
+    }
     let w = orig.w;
     let h = orig.h;
     let orig_lin = linearize_front_end(&orig, 0.5, prof);
@@ -530,6 +544,9 @@ pub fn score_nocache_paths(
         let vd = prof.time("decode", || crate::cpu::decode_png(vp))?;
         if vd.w != w || vd.h != h {
             return Err(format!("variant {vp} size {}x{} != original {w}x{h}", vd.w, vd.h));
+        }
+        if vd.alpha.is_some() {
+            return Err(batch_variant_alpha_err(vp));
         }
         let vlin = linearize_front_end(&vd, 0.5, prof);
         let scales = compute_ssimulacra2_gpu_profiled(ctx, &orig_lin, &vlin, w, h, prof)?;

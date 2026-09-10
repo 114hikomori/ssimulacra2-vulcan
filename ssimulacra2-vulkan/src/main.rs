@@ -6,9 +6,12 @@
 // worst of bg=0.1/bg=0.9; <8x8 rejected; GPU default with CPU fallback.
 // Single-pair default is size-ROUTED (GPU_ROUTE_MIN_PIXELS below); score-many
 // is GPU-always (context-init is amortized over the batch - different math).
-use ssimulacra2_vulkan::cpu::{alpha_blend, compute_ssimulacra2_cpu, decode_png, to_linear};
+use ssimulacra2_vulkan::cpu::{
+    alpha_blend, compute_ssimulacra2_cpu, decode_png, to_linear,
+};
 use ssimulacra2_vulkan::gpu_pipeline::{
-    compute_ssimulacra2_gpu_profiled, list_variants, score_batch_paths, score_nocache_paths,
+    batch_variant_alpha_err, compute_ssimulacra2_gpu_profiled, list_variants, score_batch_paths,
+    score_nocache_paths, BATCH_ORIG_ALPHA_ERR,
 };
 use ssimulacra2_vulkan::profile::Profile;
 use ssimulacra2_vulkan::score::{score, ScaleNorms};
@@ -81,13 +84,15 @@ fn run_score_many(args: &[String], t_start: std::time::Instant) {
                 eprintln!("score-many: {x}");
                 std::process::exit(1);
             });
-            let front = |dec: &ssimulacra2_vulkan::cpu::Decoded| -> Vec<f32> {
-                match &dec.alpha {
-                    Some(al) => to_linear(&alpha_blend(&dec.srgb, al, 0.5, dec.w * dec.h)),
-                    None => to_linear(&dec.srgb),
-                }
-            };
-            let ol = front(&od);
+            if od.w < 8 || od.h < 8 {
+                eprintln!("score-many: original below 8x8");
+                std::process::exit(1);
+            }
+            if od.alpha.is_some() {
+                eprintln!("score-many: {BATCH_ORIG_ALPHA_ERR}");
+                std::process::exit(1);
+            }
+            let ol = to_linear(&od.srgb);
             variants
                 .iter()
                 .map(|vp| {
@@ -95,7 +100,18 @@ fn run_score_many(args: &[String], t_start: std::time::Instant) {
                         eprintln!("score-many: {x}");
                         std::process::exit(1);
                     });
-                    let vl = front(&vd);
+                    if vd.w != od.w || vd.h != od.h {
+                        eprintln!(
+                            "score-many: variant {vp} size {}x{} != original {}x{}",
+                            vd.w, vd.h, od.w, od.h
+                        );
+                        std::process::exit(1);
+                    }
+                    if vd.alpha.is_some() {
+                        eprintln!("score-many: {}", batch_variant_alpha_err(vp));
+                        std::process::exit(1);
+                    }
+                    let vl = to_linear(&vd.srgb);
                     let s = compute_ssimulacra2_cpu(&ol, &vl, od.w, od.h);
                     (vp.clone(), score(&s))
                 })

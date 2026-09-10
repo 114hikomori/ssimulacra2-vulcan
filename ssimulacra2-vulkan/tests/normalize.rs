@@ -31,6 +31,32 @@ fn tmpdir(tag: &str) -> std::path::PathBuf {
     d
 }
 
+/// Batch contract is engine-independent (regression 2026-09-10: only the
+/// cached path enforced it; --no-cache and the no-device fallback scored
+/// alpha inputs with a 0.5 blend instead of refusing). An alpha-bearing
+/// original must fail identically on both batch modes, naming the contract.
+#[test]
+fn score_many_rejects_alpha_original_cached_and_nocache() {
+    for no_cache in [false, true] {
+        let mut args = vec![
+            "score-many",
+            "--orig",
+            "tests/fixtures/alpha_orig.png",
+            "--vars",
+            "tests/fixtures",
+        ];
+        if no_cache {
+            args.push("--no-cache");
+        }
+        let (ok, _out, err) = run(&args);
+        assert!(!ok, "score-many must fail on alpha original (no_cache {no_cache})");
+        assert!(
+            err.contains("alpha-free original"),
+            "must name the batch alpha contract, got: {err}"
+        );
+    }
+}
+
 /// Walk PNG chunks: returns (type, len) after the signature, and checks IHDR.
 fn png_chunks(path: &Path) -> (Vec<(String, u32)>, u8, u8, u32, u32) {
     let b = std::fs::read(path).unwrap();

@@ -452,9 +452,13 @@ before M6 parity — already satisfied.
   two-crossovers separation is pinned in README, main.rs const doc, and
   AGENTS 4.5 (numbers-carry-comparator rule). Pipelining/daemon parked at
   H4 status (opt-in on product request only — REQUEST ARRIVED 2026-09-10:
-  daemon product-wanted at warm 1.25x / break-even cold per sibling field
-  measurement; phase approval PENDING, correctness suite required first).
-  No other open levers.
+  daemon product-wanted per sibling field measurement; phase approval
+  PENDING, correctness suite required first). Scope caveat on that number
+  (CHECKPOINT 2026-09-10): the 1.25x warm / break-even cold measures the
+  SCORING STEP ONLY on pre-normalized inputs (GPU score-many @2 vs oracle
+  per-pair @16); the end-to-end ratio including the normalize pass the GPU
+  lane needs and the CPU lane does not is an open measurement. No other
+  open levers.
 
 ---
 

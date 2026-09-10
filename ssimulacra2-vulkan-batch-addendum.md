@@ -86,9 +86,15 @@ competitiveness (comparator: C++ oracle).
 **2026-09-10 update:** the product request ARRIVED — sibling engine field
 measurement (144-img corpus, warm MIN-of-3): Option A at 1.25x warm /
 break-even cold; daemon named by both sides as the tier where the win is real
-(~1.5-2x). Status = **proposed, NOT approved**: needs its own phase spec +
-concurrency/ordering correctness suite before any code (CHECKPOINT
-a5e94c2). Related shipping since close: `normalize` ingest door
-(759f54e, f562d79) for engine metric caches; JPEG lane stays deferred on
-cost/benefit alone, with a full-corpus dump-hash sweep as the recorded
+(~1.5-2x). SCOPE CAVEAT (same day, sibling self-correction): that 1.25x
+measures the SCORING STEP ONLY over pre-staged already-normalized RGB PNGs
+(4 bases); a true GPU lane pays `normalize(all inputs)` + score-many, while
+the oracle lane per-pair needs no prepass (its libjxl decode consumes
+alpha/gAMA directly). The corrected end-to-end A/B (normalize cost / GPU
+total / CPU total reported separately) is pending; the daemon win is NOT
+established end-to-end until it lands. Status = **proposed, NOT approved**:
+needs its own phase spec + concurrency/ordering correctness suite before any
+code (CHECKPOINT a5e94c2). Related shipping since close: `normalize` ingest
+door (759f54e, f562d79) for engine metric caches; JPEG lane stays deferred
+on cost/benefit alone, with a full-corpus dump-hash sweep as the recorded
 precondition to any wiring (074675a).

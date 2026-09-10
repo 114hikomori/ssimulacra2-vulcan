@@ -1031,3 +1031,41 @@ list owns the ids.
   approval likewise human.
 - Next: repo at rest and green; only the daemon-phase decision can open new
   work.
+
+## 2026-09-10 — sibling-report audit: 1.25x-scope correction + batch alpha-contract fix
+
+- Done: Audited the sibling's cleanup report against repo ground truth. Their
+  retraction (fabricated 17/18/23) has no counterpart here - dropped, agreed.
+  Their scoring-step-only correction APPLIES to our record: CHECKPOINT
+  a5e94c2 names the comparator (their C++ x16 pool) and warm MIN-of-3 but
+  not the step scope - the proto scored pre-staged, already-normalized RGB
+  PNGs, so 1.25x is a scoring-step proxy, NOT end-to-end; the plan and
+  addendum lines written today inherited that unscoped framing. Fixed: both
+  files now carry an explicit SCOPE CAVEAT (end-to-end ratio incl. the
+  normalize pass the GPU lane pays and the oracle lane does not is open);
+  a5e94c2 left verbatim per append-only. Their oracle description verified
+  true: ssimulacra2_main.cc:105-114 = worst-of-bg{0.1,0.9} on alpha
+  ORIGINALS, plain path otherwise; libjxl decode consumes gAMA/iCCP via a
+  real CMS transform (ssimulacra2.cc:609-612) - score-neutrality on their
+  corpus is measured (84.76747002 both ways), and the port's strict scoring
+  decode instead REFUSES such inputs by design; normalize is the once-per-
+  image door. Their "port rejects alpha" is true only for score-many (alpha-
+  free original+variants, gpu_pipeline.rs); per-pair accepts alpha with
+  oracle-identical semantics (alpha golden byte-exact in cli_parity).
+  OUR-SIDE DEFECT FOUND while cross-checking (not theirs): the batch alpha
+  contract was enforced only on the cached path - score_nocache_paths and
+  the no-device fallback both 0.5-blended alpha inputs, so --no-cache (or a
+  device-less host) could score what the default rejects; the nocache path also
+  lacked the 8x8 gate. Fix: shared BATCH_ORIG_ALPHA_ERR + batch_variant_alpha_err
+  now used by all three entry points; fallback alpha branch removed (0.5
+  blend was wrong batch semantics anyway); new regression test
+  score_many_rejects_alpha_original_cached_and_nocache. 39/39 local +
+  clippy -D clean; manual run prints the contract message byte-identical.
+- Deviated from plan: none - enforcement matches 6533a3c's stated contract;
+  default-path error text unchanged byte-for-byte.
+- Blocked / open question: none in-repo. End-to-end A/B stays sibling-owned.
+- Next: push pending authorization; hand them the three corrections (oracle
+  nuance = per-pair accepts alpha too; their GPU arm must NOT use --no-cache
+  or it measures the 1038 ms/img floor, not the 836 production shape;
+  normalize amortizes to ~0 across their hash-keyed cache - report first-run
+  and steady-state separately).
