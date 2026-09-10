@@ -97,10 +97,16 @@ input needed — never a vague "let me know how you'd like to proceed."
    correctness from re-reading your own diff. For every bug fixed, search the rest of the
    codebase for the same pattern before calling it done. **Every number recorded anywhere in
    the repo (checkpoint, README, plan docs, commit messages) must name its comparator and its
-   protocol next to it.** Three defects so far were inherited bare numbers: a unit error
-   (27% of *pipeline* read as % of *wall*), a warm/cold error (0.71 s/image), and a
-   comparator error (8.3 MP oracle-crossover proposed as the routing threshold, whose real
-   comparator is the in-binary CPU engine — crossover ~0.45 MP).
+protocol next to it.** Three defects so far were inherited bare numbers: a unit error
+(27% of *pipeline* read as % of *wall*), a warm/cold error (0.71 s/image), and a
+comparator error (8.3 MP oracle-crossover proposed as the routing threshold, whose real
+comparator is the in-binary CPU engine — crossover ~0.45 MP). A fourth was caught by
+adversarial self-review: an untested decoder-bias assertion ("WIC JPEG decode would bias
+scores") written as fact to defend a conclusion both sides already agreed on — measurement
+showed byte-identical pixels (9/9 delta 0). **Rule: any claim that something is
+architecturally impossible, or would systematically bias scores, needs a dump/sweep
+measurement run BEFORE it is written into a commit, checkpoint, README, or memo. General
+knowledge about how decoders/compilers/hardware behave is a hypothesis, not evidence.**
 6. **Report outcome-first.** Commit messages and checkpoint entries lead with what happened and
    what proved it — not a narration of steps 1–5. Don't describe this process by name anywhere
    in the repo or to the user; just follow it.
