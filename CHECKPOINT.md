@@ -1,4 +1,4 @@
-﻿# CHECKPOINT
+# CHECKPOINT
 
 Durable, append-only status log for the SSIMULACRA2 Vulkan port. Read this first at the start
 of every session (see `AGENTS.md` §1). Append new entries; never delete history.
@@ -983,3 +983,28 @@ list owns the ids.
   remains declined for REAL transparency, unchanged.
 - Blocked / open question: none.
 - Next: push + CI; engine wiring -Ss2Gpu then unblocks for real.
+
+
+## 2026-09-10 — -Ss2Gpu ceiling: 18/23 is today's state, NOT a ceiling (self-caught bias)
+- Done: the draft of this entry (written earlier today, unpushed, now
+  replaced) claimed the JPEG gap was "architecturally correct to keep"
+  because WIC/System.Drawing decode "would bias scores vs historical CSVs".
+  That claim came from general decoder knowledge and was NEVER tested - it
+  is REFUTED by direct measurement on the engine's own corpus: libjpeg-turbo
+  vs WIC decode of the same JPEGs yields byte-identical 78 MB linear_dist
+  oracle dumps (SHA256 match) and 9/9 score comparisons at delta 0.00000000
+  (3 originals x 3 jpeg folders). Adversarial self-review (fable-judge)
+  caught it; the user's bias intuition prompted the review.
+- Corrected facts: (1) 18/23 is today's coverage (Ensure-AllDecoded decodes
+  only jxl/avif/webp, compare_quality.ps1:692-694), not a ceiling - jpeg
+  variants can reach the GPU lane via Windows built-in WIC decode ->
+  normalize -> score-many, no new dependency on either side. (2) The
+  bit-identity evidence is a 9-file sample: strong, not proof across all
+  45x15; a full-corpus dump-hash sweep is cheap and should precede wiring.
+  (3) The defer decision stands on its own merits (1.25x warm-only,
+  mixed-lane plumbing cost) - it does not need, and must never get, a
+  fabricated architectural impossibility.
+- Deviated from plan: none; this entry supersedes the refuted draft.
+- Blocked / open question: none.
+- Next: memo to engine owner updated (opaque-alpha + gAMA ingest + jpeg-WIC
+  path); corrected commit stays local - push awaits authorization.
