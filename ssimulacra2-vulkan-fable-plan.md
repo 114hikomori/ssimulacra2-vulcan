@@ -2,9 +2,13 @@
 
 **Status:** EXECUTED AND CLOSED through M10-batch (2026-09-09): M0-M9 done
 (Phases A-G), Phase H adjudicated (option (a) for the single-pair CLI),
-M10-batch shipped and closed (caching + 0.5 MP routing). Per-milestone exit
-observations live in `CHECKPOINT.md`; CI green through run #28. This document
-is the approved plan of record - read it with the Phase H annotations below.
+M10-batch shipped and closed (caching + 0.5 MP routing). Post-close tooling
+(2026-09-09/10, CI #30-#34): `normalize` ingest subcommand, full README,
+usage discoverability — no new milestone ids. Daemon phase: product-WANTED
+(sibling field result) but NOT approved - needs its own phase spec +
+concurrency-correctness suite before any code. Per-milestone exit
+observations live in `CHECKPOINT.md`. This document is the approved plan of
+record - read it with the Phase H annotations below.
 
 **Scope:** Port the repository's SSIMULACRA2 v2.1 CPU implementation (`src/ssimulacra2.cc` +
 vendored libjxl pieces) to a Vulkan compute backend, with the C++ implementation kept as the
@@ -447,7 +451,10 @@ before M6 parity — already satisfied.
   DISTINCT number: GPU-vs-C++-oracle competitiveness, not routing — the
   two-crossovers separation is pinned in README, main.rs const doc, and
   AGENTS 4.5 (numbers-carry-comparator rule). Pipelining/daemon parked at
-  H4 status (opt-in on product request only). No open levers.
+  H4 status (opt-in on product request only — REQUEST ARRIVED 2026-09-10:
+  daemon product-wanted at warm 1.25x / break-even cold per sibling field
+  measurement; phase approval PENDING, correctness suite required first).
+  No other open levers.
 
 ---
 

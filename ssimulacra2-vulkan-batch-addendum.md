@@ -82,3 +82,13 @@ competitiveness (comparator: C++ oracle).
 **2026-09-09: both checklists run against the repo.** Checklist 2 (true-4K class) fully closed with measurements above — headline: at production resolution the GPU is parity-to-ahead single-process (0.84–0.93× cold MIN) and score-exact vs oracle (`2.27761200`), so M10-batch starts from a lead, not a deficit. Checklist 1 partially closed: separation answer (no — one-shot dual-image loop, cleanly separable) + data-derived caching ceiling (~27% of 4K wall per image); the shared-batch A/B and cached-vs-fresh bit-exactness asserts require the prep/compare refactor itself, which is the batch-phase implementation — not yet authorized. Next gate: human approval of a batch/daemon phase spec built on these measured numbers.
 
 **2026-09-09 (end of phase): approved, implemented, CLOSED.** Batch round 1 shipped (`6533a3c`, CI #27): three-way bit-exact caching, 4K A/B = **19.5%** (gate target 27% — accepted below the original number as a unit-mismatch correction, see CHECKPOINT; the ~27% ceiling line above is superseded by the 19.5% measured row). Decision 3 shipped (this session): single-pair CLI routes at 500k px (comparator corrected to the in-binary CPU engine; ~0.40-0.45MP crossover, `bench/routing_calib.py`), `--gpu` override added, `score-many` explicitly unrouted. Pipelining/daemon: parked at H4 status, opt-in on product request only.
+
+**2026-09-10 update:** the product request ARRIVED — sibling engine field
+measurement (144-img corpus, warm MIN-of-3): Option A at 1.25x warm /
+break-even cold; daemon named by both sides as the tier where the win is real
+(~1.5-2x). Status = **proposed, NOT approved**: needs its own phase spec +
+concurrency/ordering correctness suite before any code (CHECKPOINT
+a5e94c2). Related shipping since close: `normalize` ingest door
+(759f54e, f562d79) for engine metric caches; JPEG lane stays deferred on
+cost/benefit alone, with a full-corpus dump-hash sweep as the recorded
+precondition to any wiring (074675a).

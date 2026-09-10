@@ -222,7 +222,8 @@ single-scale GPU error maps (SSIM + blockiness/ringing + smoothing/blur) match C
 6-scale pipeline, CPU preprocessing + GPU compute (critical functional milestone) · M6 norms
 (1-norm + 4-norm) + weighted sum + final-score parity · M7 alpha/gray/odd-size/small-image
 matrix green · M8 CLI + CI + fallback integrated · M9 performance profile completed · M10
-optimized path beats measured CPU baseline.
+optimized path beats the C++ **oracle** baseline (comparator fixed 2026-09-09 by human review —
+NOT the in-binary CPU engine; final status incl. M10-batch lives in plan §16 + CHECKPOINT).
 
 Don't skip ahead to a later phase's work before the current milestone's exit-observation is
 actually met (met = observed, per §4.5) — the order is a correctness strategy, not a

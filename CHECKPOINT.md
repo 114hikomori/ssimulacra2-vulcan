@@ -1008,3 +1008,26 @@ list owns the ids.
 - Blocked / open question: none.
 - Next: memo to engine owner updated (opaque-alpha + gAMA ingest + jpeg-WIC
   path); corrected commit stays local - push awaits authorization.
+
+## 2026-09-10 — leftover audit (repo-wide sweep, this entry)
+
+- Done: Observed-verified at 8b09c13: worktree clean, local==origin (prior
+  entry's "stays local" since superseded - 074675a/8b09c13 WERE pushed,
+  CI #34 green on HEAD; no stash/extra branches/tags/worktrees), 38/38 tests
+  re-run locally with 0 ignored, clippy -D clean, no TODO/FIXME/todo!/dbg in
+  the crate, OOM->CPU fallback confirmed to emit "note: GPU path failed"
+  (main.rs:232) - the "silent" in the sibling regression note is their
+  harness swallowing stderr, not our binary. Open items (all recorded, human-
+  gated): (1) daemon phase product-wanted but NOT approved - needs phase spec
+  + concurrency-correctness suite; (2) jpeg lane deferred on cost/benefit -
+  full-corpus dump sweep is the recorded precondition; (3) engine-side
+  -Ss2Gpu wiring is the sibling's move, our side unblocked. Doc-drift fixed
+  (this commit): AGENTS 9 M10 comparator wording, plan status line + Phase-H
+  park line (daemon-requested), addendum close note.
+- Deviated from plan: none.
+- Blocked / open question: opencode.json (AGENTS 5, "recommended") absent -
+  adding repo-wide "git push: deny" would also block human-authorized pushes;
+  appears to be a deliberate non-adoption, left for the human. Daemon phase
+  approval likewise human.
+- Next: repo at rest and green; only the daemon-phase decision can open new
+  work.
